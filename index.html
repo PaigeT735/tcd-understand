@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TCD Understand</title>
+  <meta name="description" content="Weekly readings, homework, grade breakdowns and key dates for Michaelmas Term.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%238A5A34'/><path d='M9 11h14M16 11v12' stroke='white' stroke-width='3' stroke-linecap='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // Apply saved theme before paint to avoid a flash.
+    try {
+      var t = JSON.parse(localStorage.getItem('tcd-understand:v1') || '{}');
+      var pref = t.settings && t.settings.theme;
+      if (pref === 'light' || pref === 'dark') document.documentElement.dataset.theme = pref;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="term">
+        <p class="term-name" id="term-name"></p>
+        <h1 class="term-week" id="term-week"></h1>
+        <p class="term-range" id="term-range"></p>
+      </div>
+      <div class="timeline" id="timeline" aria-label="Term progress"></div>
+      <div class="top-side">
+        <p class="today" id="today"></p>
+        <p class="week-progress" id="week-progress"></p>
+        <button class="theme-toggle" id="theme-toggle" type="button"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="board">
+    <section class="panel" id="panel-readings" aria-labelledby="h-readings">
+      <div class="panel-head">
+        <h2 id="h-readings">Weekly Reading</h2>
+        <span class="panel-meta" data-count="readings"></span>
+      </div>
+      <div class="cols" aria-hidden="true"><span>Status</span><span>Reading</span><span class="c-due">Due</span><span></span></div>
+      <ul class="tasks" data-list="readings"></ul>
+      <div class="panel-foot" data-foot="readings"></div>
+    </section>
+
+    <section class="panel" id="panel-homework" aria-labelledby="h-homework">
+      <div class="panel-head">
+        <h2 id="h-homework">Weekly HW</h2>
+        <span class="panel-meta" data-count="homework"></span>
+      </div>
+      <div class="cols" aria-hidden="true"><span>Status</span><span>Homework</span><span class="c-due">Due</span><span></span></div>
+      <ul class="tasks" data-list="homework"></ul>
+      <div class="panel-foot" data-foot="homework"></div>
+    </section>
+
+    <section class="panel panel-wide" id="panel-grades" aria-labelledby="h-grades">
+      <div class="panel-head">
+        <h2 id="h-grades">GradesComp</h2>
+        <span class="panel-meta" id="grades-meta"></span>
+      </div>
+      <ul class="classes" id="classes"></ul>
+      <div class="panel-foot" id="grades-foot"></div>
+    </section>
+
+    <section class="panel" id="panel-dates" aria-labelledby="h-dates">
+      <div class="panel-head">
+        <h2 id="h-dates">Essential Dates</h2>
+        <span class="panel-meta" id="dates-meta"></span>
+      </div>
+      <ul class="dates" id="dates"></ul>
+      <div class="panel-foot" id="dates-foot"></div>
+    </section>
+  </main>
+
+  <footer class="bottom">
+    <p>Saved in this browser. Lists reset every Monday.</p>
+    <div class="bottom-actions">
+      <button type="button" class="link" id="export">Export backup</button>
+      <button type="button" class="link" id="import">Import backup</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    </div>
+  </footer>
+
+  <div class="status-menu" id="status-menu" role="menu" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="js/dates.js"></script>
+  <script src="js/seed.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
