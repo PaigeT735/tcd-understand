@@ -31,6 +31,11 @@
       <div class="top-side">
         <p class="today" id="today"></p>
         <p class="week-progress" id="week-progress"></p>
+        <p class="status-key" aria-label="Status colours">
+          <span><span class="dot s-todo" aria-hidden="true"></span>Not started</span>
+          <span><span class="dot s-doing" aria-hidden="true"></span>In progress</span>
+          <span><span class="dot s-done" aria-hidden="true"></span>Done</span>
+        </p>
         <button class="theme-toggle" id="theme-toggle" type="button"></button>
       </div>
     </div>
@@ -42,7 +47,7 @@
         <h2 id="h-readings">Weekly Reading</h2>
         <span class="panel-meta" data-count="readings"></span>
       </div>
-      <div class="cols" aria-hidden="true"><span>Status</span><span>Reading</span><span class="c-due">Due</span><span></span></div>
+      <div class="cols" aria-hidden="true"><span>Status</span><span>Class and reading</span><span class="c-due">Due</span><span></span></div>
       <ul class="tasks" data-list="readings"></ul>
       <div class="panel-foot" data-foot="readings"></div>
     </section>
@@ -52,7 +57,7 @@
         <h2 id="h-homework">Weekly HW</h2>
         <span class="panel-meta" data-count="homework"></span>
       </div>
-      <div class="cols" aria-hidden="true"><span>Status</span><span>Homework</span><span class="c-due">Due</span><span></span></div>
+      <div class="cols" aria-hidden="true"><span>Status</span><span>Class and assignment</span><span class="c-due">Due</span><span></span></div>
       <ul class="tasks" data-list="homework"></ul>
       <div class="panel-foot" data-foot="homework"></div>
     </section>
@@ -82,15 +87,18 @@
   </main>
 
   <footer class="bottom">
-    <p>Saved in this browser. Reading and HW reset on Mondays, Maths &amp; Stats on Tuesdays.</p>
-    <div class="bottom-actions">
-      <button type="button" class="link" id="export">Export backup</button>
-      <button type="button" class="link" id="import">Import backup</button>
-      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    <button type="button" class="nav-toggle" id="nav-toggle" data-action="nav"></button>
+    <div class="bottom-info">
+      <p>Saved in this browser. Reading and HW reset on Mondays, Maths &amp; Stats on Tuesdays.</p>
+      <div class="bottom-actions">
+        <button type="button" class="link" id="export">Export backup</button>
+        <button type="button" class="link" id="import">Import backup</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+      </div>
     </div>
   </footer>
 
-  <button type="button" class="nav-toggle" id="nav-toggle" data-action="nav"></button>
+  <datalist id="class-options"></datalist>
   <div class="status-menu" id="status-menu" role="menu" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 

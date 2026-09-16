@@ -10,10 +10,10 @@
     other: { label: 'Other', store: 'events' }
   };
   const CONTEXT = {
-    readings: { types: ['reading'], name: 'Reading name', placeholder: 'e.g. Varian chapters', add: 'Add reading' },
-    homework: { types: ['hw', 'math', 'stats'], name: 'Homework name', placeholder: 'e.g. Problem set', add: 'Add homework' },
+    readings: { types: ['reading'], name: 'Reading', placeholder: 'e.g. Chapter 4', add: 'Add reading' },
+    homework: { types: ['hw', 'math', 'stats'], name: 'Assignment', placeholder: 'e.g. Problem set', add: 'Add homework' },
     dates: { types: ['essential'], name: 'What’s happening', placeholder: 'e.g. Essay due', add: 'Add date' },
-    calendar: { types: ['reading', 'hw', 'math', 'stats', 'essential', 'other'], name: 'Event name', placeholder: 'e.g. Microeconomics essay', add: 'Add event' }
+    calendar: { types: ['reading', 'hw', 'math', 'stats', 'essential', 'other'], name: 'Event name', placeholder: 'e.g. Chapter 4 reading', add: 'Add event' }
   };
   const PRESETS = ['none', 'daily', 'weekly', 'biweekly', 'monthly', 'bimonthly', 'yearly', 'custom'];
   const PRESET_LABEL = {
@@ -94,15 +94,16 @@
     const multi = c.types.length > 1;
     let h = '<form class="form' + (o.isNew && o.context !== 'calendar' ? ' new' : '') + '" data-form="item" data-context="' + o.context +
       '" data-store="' + esc(o.store || '') + '" data-id="' + esc(o.id || '') + '" novalidate>';
-    h += '<label class="full">' + c.name + '<input type="text" name="name" value="' + esc(d.name) + '" required placeholder="' + esc(c.placeholder) + '"></label>';
     if (multi) {
       h += '<label>Type<select name="type">' + c.types.map(function (t) { return option(t, TYPES[t].label, d.type); }).join('') + '</select></label>';
     } else {
       h += '<input type="hidden" name="type" value="' + c.types[0] + '">';
     }
     if (c.types.some(function (t) { return TYPES[t].academic; })) {
-      h += '<label data-show="academic"' + (multi ? '' : ' class="full"') + '>Module<input type="text" name="module" value="' + esc(d.module) + '" placeholder="e.g. Economics A"></label>';
+      h += '<label data-show="academic"' + (multi ? '' : ' class="full"') + '>Class<input type="text" name="module" value="' + esc(d.module) + '" placeholder="e.g. Economics A" list="class-options" autocomplete="off"></label>';
     }
+    h += '<label class="full"><span data-show="academic">' + (o.context === 'calendar' ? 'What to do' : c.name) + '</span><span data-show="not-academic">' + c.name + '</span>' +
+      '<input type="text" name="name" value="' + esc(d.name) + '" required placeholder="' + esc(c.placeholder) + '"></label>';
     h += '<label><span data-show="not-essential">Start date (optional)</span><span data-show="essential">From (optional, for a range)</span>' +
       '<input type="date" name="start" value="' + esc(d.start) + '"></label>';
     h += '<label><span data-show="not-essential">Due date</span><span data-show="essential">Date</span>' +
@@ -151,6 +152,7 @@
     const preset = f.preset.value;
     const cond = {
       academic: !!T.academic,
+      'not-academic': !T.academic,
       essential: type === 'essential',
       'not-essential': type !== 'essential',
       'rep-yes': rep,
