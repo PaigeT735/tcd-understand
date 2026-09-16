@@ -3,21 +3,38 @@
 
   let state = Store.load();
   const ui = {
+    view: 'dashboard',
     open: new Set(),     // expanded rows: "readings:id", "homework:id", "class:id"
-    editing: null,       // "readings:id", "new:readings", "class:id", "new:class", "date:id", "new:date"
-    today: D.today()
+    editing: null,       // dashboard form: "readings:id", "new:readings", "class:id", "new:class", "dates:id", "new:dates"
+    later: { readings: false, homework: false },
+    today: D.today(),
+    cal: { month: '', selected: '', form: null } // form: { isNew, store, id, date }
   };
+  ui.cal.selected = ui.today;
+  ui.cal.month = ui.today.slice(0, 8) + '01';
 
+  const TYPES = Form.TYPES;
+  const TASKS = ['readings', 'homework'];
   const STATUS = {
     todo: { label: 'Not started', key: 'Red' },
     doing: { label: 'In progress', key: 'Yellow' },
     done: { label: 'Completed', key: 'Green' }
   };
   const LISTS = {
-    readings: { singular: 'reading', title: 'Reading' },
-    homework: { singular: 'homework', title: 'Homework' }
+    readings: { singular: 'reading', plural: 'readings' },
+    homework: { singular: 'homework', plural: 'homework' }
+  };
+  // Calendar colour groups, in the order they're listed within a day.
+  const GROUPS = {
+    essential: { label: 'Essential date', order: 0 },
+    maths: { label: 'Maths & Stats', order: 1 },
+    hw: { label: 'Homework', order: 2 },
+    reading: { label: 'Reading', order: 3 },
+    other: { label: 'Personal', order: 4 }
   };
   const CHEV = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M5 3l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const CHEV_L = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M9 3L5 7l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const CAL_ICON = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="11.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M1.75 6.25h12.5M5 1.25v3M11 1.25v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const $ = (s, r = document) => r.querySelector(s);
@@ -36,45 +53,155 @@
   function save() {
     if (!Store.save(state)) toast('Couldn’t save. Your browser storage may be full or blocked.');
   }
+  function find(store, id) { return state[store].find(function (x) { return x.id === id; }); }
 
-  /* ---------- Weeks ---------- */
+  /* ---------- Item helpers (shared by dashboard and calendar) ---------- */
 
-  function syncWeek() {
-    ui.today = D.today();
-    const current = D.mondayOf(ui.today);
-    if (!state.weekOf) state.weekOf = current;
-    if (state.weekOf === current) return false;
+  function cur(store, it) { return R.current(it, store, ui.today); }
 
-    if (state.weekOf < current) {
-      ['readings', 'homework'].forEach(function (k) {
-        state[k] = state[k].filter(function (it) {
-          return it.recurring || it.status !== 'done'; // finished one-off items drop off
-        });
-        state[k].forEach(function (it) { if (it.recurring) it.status = 'todo'; });
-      });
-      state.weekOf = current;
-      save();
-      return 'reset';
-    }
-    state.weekOf = current; // clock moved backwards: follow it without wiping progress
-    save();
-    return 'moved';
+  // Status belongs to one occurrence. When the current occurrence moves on
+  // (Monday, or Tuesday for Maths & Stats), the item reads as Not started.
+  function statusOf(store, it) {
+    return it.statusOn && it.statusOn === cur(store, it).due ? it.status : 'todo';
   }
+
+  function typeOf(store, it) {
+    if (store === 'dates') return 'essential';
+    if (store === 'events') return 'other';
+    if (store === 'readings') return 'reading';
+    if (it.kind === 'maths') return it.subject === 'Statistics' ? 'stats' : 'math';
+    return 'hw';
+  }
+  function groupOf(type) { return type === 'math' || type === 'stats' ? 'maths' : (type === 'essential' || type === 'other' || type === 'hw' || type === 'reading' ? type : 'other'); }
+  function nameOf(store, it) { return store === 'dates' ? it.title : it.name; }
+  function typeLabel(store, it) {
+    const t = typeOf(store, it);
+    if (store === 'homework' && it.kind === 'maths') return it.subject ? it.subject + ' problem set' : 'Maths & Stats problem set';
+    return TYPES[t].label;
+  }
+
+  // Where a task belongs on the dashboard: this week, later, or no longer relevant.
+  function placement(store, it) {
+    const weekMon = D.mondayOf(ui.today);
+    const weekSun = D.addDays(weekMon, 6);
+    const c = cur(store, it);
+    if (!it.repeat && statusOf(store, it) === 'done' && c.due < weekMon) return 'hidden';
+    if (it.repeat && R.endedBefore(it, store, ui.today) && c.due < weekMon) return 'hidden';
+    if (R.isAcademic(it)) {
+      const P = R.periodStart(ui.today, R.CYCLES[it.kind].startDay);
+      return it.anchor <= P ? 'now' : 'later';
+    }
+    if (c.due <= weekSun || (c.start && c.start <= ui.today)) return 'now';
+    return 'later';
+  }
+
+  function toDraft(store, it) {
+    if (store === 'dates') {
+      return {
+        type: 'essential', name: it.title, module: '', source: '', schedule: '', note: it.note,
+        start: it.end ? it.start : '', due: it.end || it.start, repeat: Form.repeatToDraft(it.repeat)
+      };
+    }
+    if (store === 'events') {
+      return {
+        type: 'other', name: it.name, module: '', source: '', schedule: '', note: it.note,
+        start: it.start, due: it.due, repeat: Form.repeatToDraft(it.repeat)
+      };
+    }
+    const c = R.isAcademic(it) ? cur(store, it) : it;
+    return {
+      type: typeOf(store, it), name: it.name, module: it.module, source: it.source,
+      schedule: Form.scheduleText(it.schedule), note: it.details,
+      start: c.start || '', due: c.due, repeat: Form.repeatToDraft(it.repeat)
+    };
+  }
+
+  function blankDraft(context, date) {
+    const types = Form.CONTEXT[context].types;
+    let due = date;
+    if (!due) {
+      const sunday = D.addDays(D.mondayOf(ui.today), 6);
+      due = context === 'dates' ? ui.today : (ui.today > sunday ? ui.today : sunday);
+    }
+    return { type: types[0], name: '', module: '', source: '', schedule: '', note: '', start: '', due: due, repeat: Form.emptyRepeat() };
+  }
+
+  // Saves a draft to the right list, moving the item if its type changed.
+  // One source of truth: dashboard and calendar both go through here.
+  function saveDraft(draft, prevStore, prevId) {
+    const T = TYPES[draft.type];
+    const store = T.store;
+    const prev = prevStore ? find(prevStore, prevId) : null;
+    const id = prev ? prev.id : uid(store[0]);
+    const repeat = Form.draftToRepeat(draft.repeat);
+    let item;
+
+    if (R.isTask(store)) {
+      const wasActive = prev && R.isTask(prevStore) && statusOf(prevStore, prev) !== 'todo';
+      item = {
+        id: id,
+        name: draft.name, module: draft.module, source: draft.source, details: draft.note,
+        schedule: Form.parseSchedule(draft.schedule),
+        kind: T.kind, subject: T.subject || '',
+        status: prev && prev.status ? prev.status : 'todo', statusOn: prev && prev.statusOn ? prev.statusOn : '',
+        start: '', due: '', dueOffset: 6, startOffset: null, anchor: '', repeat: repeat
+      };
+      if (R.isAcademic(item)) {
+        const P = R.periodForDue(item.kind, draft.due);
+        item.dueOffset = D.diffDays(P, draft.due);
+        item.startOffset = draft.start ? D.diffDays(P, draft.start) : null;
+        const keep = prev && R.isTask(prevStore) && R.isAcademic(prev) && prev.kind === item.kind && prev.anchor && prev.anchor < P;
+        item.anchor = keep ? prev.anchor : P;
+      } else {
+        item.due = draft.due;
+        item.start = draft.start;
+      }
+      item.statusOn = wasActive ? R.current(item, store, ui.today).due : (item.statusOn || '');
+      if (!wasActive) item.status = 'todo';
+    } else if (store === 'dates') {
+      item = { id: id, title: draft.name, start: draft.start || draft.due, end: draft.start ? draft.due : '', note: draft.note, repeat: repeat };
+    } else {
+      item = { id: id, name: draft.name, start: draft.start, due: draft.due, note: draft.note, repeat: repeat };
+    }
+
+    if (prev && prevStore === store) {
+      const idx = state[store].indexOf(prev);
+      state[store][idx] = item;
+    } else {
+      if (prev) state[prevStore].splice(state[prevStore].indexOf(prev), 1);
+      state[store].push(item);
+    }
+    save();
+    return { store: store, id: id, item: item };
+  }
+
+  function deleteItem(store, id) {
+    const idx = state[store].findIndex(function (x) { return x.id === id; });
+    if (idx < 0) return;
+    const removed = state[store].splice(idx, 1)[0];
+    ui.open.delete(store + ':' + id);
+    if (ui.editing === store + ':' + id) ui.editing = null;
+    if (ui.cal.form && ui.cal.form.id === id) ui.cal.form = null;
+    save();
+    refresh(true);
+    toast('Deleted “' + nameOf(store, removed) + '”', function () {
+      state[store].splice(Math.min(idx, state[store].length), 0, removed);
+      save();
+      refresh(true);
+    });
+  }
+
+  /* ---------- Header ---------- */
 
   function termWeek(monday) {
     return Math.floor(D.diffDays(state.term.start, monday) / 7) + 1;
   }
 
-  function dueOf(it) {
-    return it.recurring ? D.addDays(state.weekOf, it.dueOffset) : it.dueDate;
-  }
-
-  /* ---------- Header ---------- */
-
   function renderHeader() {
     const t = state.term;
-    const wk = termWeek(state.weekOf);
-    const sunday = D.addDays(state.weekOf, 6);
+    const monday = D.mondayOf(ui.today);
+    const wk = termWeek(monday);
+    const sunday = D.addDays(monday, 6);
     let title;
     if (wk < 1) title = 'Before term';
     else if (wk > t.weeks) title = 'After teaching';
@@ -83,8 +210,8 @@
 
     $('#term-name').textContent = t.name;
     $('#term-week').textContent = title;
-    const sameMonth = D.parse(state.weekOf).getMonth() === D.parse(sunday).getMonth();
-    $('#term-range').textContent = D.short(state.weekOf) + '–' + (sameMonth ? D.parse(sunday).getDate() : D.short(sunday));
+    const sameMonth = D.parse(monday).getMonth() === D.parse(sunday).getMonth();
+    $('#term-range').textContent = D.short(monday) + '–' + (sameMonth ? D.parse(sunday).getDate() : D.short(sunday));
 
     let segs = '', labels = '';
     for (let i = 1; i <= t.weeks; i++) {
@@ -101,14 +228,24 @@
     $('#timeline').setAttribute('aria-label', 'Term progress: ' + title + ' of ' + t.weeks);
 
     $('#today').textContent = D.long(ui.today);
-    const all = state.readings.concat(state.homework);
-    const done = all.filter(function (i) { return i.status === 'done'; }).length;
-    $('#week-progress').textContent = all.length ? done + ' of ' + all.length + ' done this week' : 'Nothing due this week';
+    let total = 0, done = 0;
+    TASKS.forEach(function (k) {
+      state[k].forEach(function (it) {
+        if (placement(k, it) !== 'now') return;
+        total++;
+        if (statusOf(k, it) === 'done') done++;
+      });
+    });
+    $('#week-progress').textContent = total ? done + ' of ' + total + ' done this week' : 'Nothing due this week';
 
     const dark = effectiveTheme() === 'dark';
     const btn = $('#theme-toggle');
     btn.textContent = dark ? 'Light mode' : 'Dark mode';
     btn.setAttribute('aria-label', 'Switch to ' + (dark ? 'light' : 'dark') + ' mode');
+
+    const nav = $('#nav-toggle');
+    nav.innerHTML = ui.view === 'calendar' ? CHEV_L + '<span>Dashboard</span>' : CAL_ICON + '<span>Calendar</span>';
+    nav.setAttribute('aria-label', ui.view === 'calendar' ? 'Back to dashboard' : 'Open calendar');
   }
 
   function effectiveTheme() {
@@ -124,77 +261,64 @@
 
   /* ---------- Weekly Reading / Weekly HW ---------- */
 
-  function orderedItems(list) {
-    const items = state[list];
-    return items.filter(function (i) { return i.status !== 'done'; })
-      .concat(items.filter(function (i) { return i.status === 'done'; }));
-  }
-
-  function dueCell(it) {
-    const due = dueOf(it);
-    if (!due) return '<span class="task-due">—</span>';
+  function dueCell(it, c, status) {
+    const due = c.due;
     const cls = ['task-due'];
     let title = D.long(due);
-    if (it.status !== 'done') {
+    if (status !== 'done') {
       if (due === ui.today) { cls.push('today'); title += ' (today)'; }
       else if (due < ui.today) { cls.push('late'); title += ' (overdue)'; }
     }
     return '<span class="' + cls.join(' ') + '" title="' + title + '">' + D.short(due) + '</span>';
   }
 
-  function detailHTML(list, it) {
-    const wk = termWeek(state.weekOf);
-    const due = dueOf(it);
+  function detailHTML(list, it, c) {
+    const wk = termWeek(D.mondayOf(ui.today));
     let rows = '';
     if (it.module) rows += '<dt>Module</dt><dd>' + esc(it.module) + '</dd>';
     rows += '<dt>What</dt><dd>' + esc(it.name) + '</dd>';
+    if (list === 'homework') rows += '<dt>Type</dt><dd>' + esc(typeLabel(list, it)) + '</dd>';
     if (it.schedule[wk]) rows += '<dt>This week</dt><dd>' + linkify(it.schedule[wk]) + '</dd>';
     if (it.schedule[wk + 1]) rows += '<dt>Next week</dt><dd>' + linkify(it.schedule[wk + 1]) + '</dd>';
     rows += '<dt>Where to find it</dt><dd>' + (it.source ? linkify(it.source) : '<span class="repeat-tag">Not added yet</span>') + '</dd>';
     if (it.details) rows += '<dt>Notes</dt><dd>' + linkify(it.details) + '</dd>';
-    rows += '<dt>Due</dt><dd>' + (due ? esc(D.long(due)) : '—') +
-      ' <span class="repeat-tag">(' + (it.recurring ? 'repeats every ' + D.weekday(due) : 'one-off') + ')</span></dd>';
+    if (c.release) rows += '<dt>Released</dt><dd>' + esc(D.long(c.release)) + '</dd>';
+    if (c.start) rows += '<dt>Starts</dt><dd>' + esc(D.long(c.start)) + '</dd>';
+    rows += '<dt>Due</dt><dd>' + esc(D.long(c.due)) +
+      ' <span class="repeat-tag">(' + (it.repeat ? esc(R.describe(it, list).toLowerCase()) : 'one-off') + ')</span></dd>';
     rows += '<dd class="actions">' +
       '<button type="button" class="link" data-action="edit-task" data-list="' + list + '" data-id="' + it.id + '">Edit</button>' +
-      '<button type="button" class="link danger" data-action="delete-task" data-list="' + list + '" data-id="' + it.id + '">Delete</button></dd>';
+      '<button type="button" class="link danger" data-action="delete-item" data-store="' + list + '" data-id="' + it.id + '">Delete</button></dd>';
     return '<dl class="detail">' + rows + '</dl>';
   }
 
-  function scheduleText(schedule) {
-    return Object.keys(schedule).map(Number).sort(function (a, b) { return a - b; })
-      .map(function (k) { return k + ': ' + schedule[k]; }).join('\n');
-  }
-  function parseSchedule(text) {
-    const out = {};
-    text.split('\n').forEach(function (line) {
-      const m = line.match(/^\s*(?:w(?:ee)?k?\s*)?(\d{1,2})\s*[:.\-–]\s*(.+?)\s*$/i);
-      if (m) out[Number(m[1])] = m[2];
-    });
-    return out;
-  }
-
-  function taskFormHTML(list, it, isNew) {
-    const meta = LISTS[list];
-    const due = it ? dueOf(it) : defaultDue();
-    const v = it || { name: '', module: '', source: '', details: '', schedule: {}, recurring: true };
-    const where = list === 'readings' ? 'Where to find it' : 'Where to find it / submit it';
-    return '<form class="form' + (isNew ? ' new' : '') + '" data-form="task" data-list="' + list + '" data-id="' + (it ? it.id : '') + '" novalidate>' +
-      '<label class="full">' + meta.title + ' name<input type="text" name="name" value="' + esc(v.name) + '" required placeholder="' + (list === 'readings' ? 'e.g. Varian chapters' : 'e.g. Problem set') + '"></label>' +
-      '<label>Module<input type="text" name="module" value="' + esc(v.module) + '" placeholder="e.g. Economics A"></label>' +
-      '<label>Due date<input type="date" name="due" value="' + esc(due) + '" required></label>' +
-      '<label class="check full"><input type="checkbox" name="recurring"' + (v.recurring ? ' checked' : '') + '> Repeats every week on this day</label>' +
-      '<label class="full">' + where + '<textarea name="source" rows="2" placeholder="Blackboard, library, a link…">' + esc(v.source) + '</textarea></label>' +
-      '<label class="full">Notes<textarea name="details" rows="2">' + esc(v.details) + '</textarea></label>' +
-      '<label class="full">Week-by-week (optional)<textarea name="schedule" rows="3" placeholder="3: S&S Ch 8 & 9">' + esc(scheduleText(v.schedule)) + '</textarea>' +
-      '<span class="hint">One line per term week. The current week’s line shows when you open this item.</span></label>' +
-      '<div class="form-actions"><button type="submit" class="btn primary">' + (isNew ? 'Add ' + meta.singular : 'Save changes') + '</button>' +
-      '<button type="button" class="btn" data-action="cancel-edit">Cancel</button></div>' +
-      '</form>';
+  function rowHTML(list, it) {
+    const key = list + ':' + it.id;
+    const editing = ui.editing === key;
+    const open = editing || ui.open.has(key);
+    const c = cur(list, it);
+    const status = statusOf(list, it);
+    const st = STATUS[status];
+    const body = editing
+      ? Form.html({ context: list, draft: toDraft(list, it), isNew: false, store: list, id: it.id })
+      : detailHTML(list, it, c);
+    return '<li class="task' + (status === 'done' ? ' done' : '') + (open ? ' open' : '') + '" data-id="' + it.id + '" data-key="' + key + '">' +
+      '<div class="task-row">' +
+        '<button type="button" class="status-btn s-' + status + '" data-action="status" data-list="' + list + '" data-id="' + it.id + '" aria-haspopup="menu" aria-label="Status: ' + st.label + '. Change status" title="' + st.label + '"><span class="dot"></span></button>' +
+        '<button type="button" class="task-main" data-action="toggle" aria-expanded="' + open + '">' +
+          '<span class="task-name">' + esc(it.name) + '</span>' +
+          (it.module ? '<span class="task-module">' + esc(it.module) + '</span>' : '') +
+        '</button>' +
+        dueCell(it, c, status) +
+        '<button type="button" class="chev" data-action="toggle" aria-expanded="' + open + '" aria-label="' + (open ? 'Hide' : 'Show') + ' details for ' + esc(it.name) + '">' + CHEV + '</button>' +
+      '</div>' +
+      '<div class="reveal"><div class="reveal-inner">' + body + '</div></div>' +
+    '</li>';
   }
 
-  function defaultDue() {
-    const sunday = D.addDays(state.weekOf, 6);
-    return ui.today > sunday ? ui.today : sunday;
+  function doneLast(list, items) {
+    return items.filter(function (i) { return statusOf(list, i) !== 'done'; })
+      .concat(items.filter(function (i) { return statusOf(list, i) === 'done'; }));
   }
 
   function renderTasks(list, animate) {
@@ -204,36 +328,44 @@
       $$('li[data-id]', ul).forEach(function (li) { before[li.dataset.id] = li.getBoundingClientRect().top; });
     }
 
-    const items = orderedItems(list);
-    let html = '';
-    if (!items.length && ui.editing !== 'new:' + list) {
-      html = '<li class="empty">No ' + (list === 'readings' ? 'readings' : 'homework') + ' this week. Add one below.</li>';
-    }
-    items.forEach(function (it) {
-      const key = list + ':' + it.id;
-      const editing = ui.editing === key;
-      const open = editing || ui.open.has(key);
-      const st = STATUS[it.status];
-      html += '<li class="task' + (it.status === 'done' ? ' done' : '') + (open ? ' open' : '') + '" data-id="' + it.id + '" data-key="' + key + '">' +
-        '<div class="task-row">' +
-          '<button type="button" class="status-btn s-' + it.status + '" data-action="status" data-list="' + list + '" data-id="' + it.id + '" aria-haspopup="menu" aria-label="Status: ' + st.label + '. Change status" title="' + st.label + '"><span class="dot"></span></button>' +
-          '<button type="button" class="task-main" data-action="toggle" aria-expanded="' + open + '">' +
-            '<span class="task-name">' + esc(it.name) + '</span>' +
-            (it.module ? '<span class="task-module">' + esc(it.module) + '</span>' : '') +
-          '</button>' +
-          dueCell(it) +
-          '<button type="button" class="chev" data-action="toggle" aria-expanded="' + open + '" aria-label="' + (open ? 'Hide' : 'Show') + ' details for ' + esc(it.name) + '">' + CHEV + '</button>' +
-        '</div>' +
-        '<div class="reveal"><div class="reveal-inner">' + (editing ? taskFormHTML(list, it, false) : detailHTML(list, it)) + '</div></div>' +
-      '</li>';
+    const now = [], later = [];
+    state[list].forEach(function (it) {
+      const p = placement(list, it);
+      if (p === 'now') now.push(it);
+      else if (p === 'later') later.push(it);
     });
-    if (ui.editing === 'new:' + list) html += '<li class="new-item">' + taskFormHTML(list, null, true) + '</li>';
-    ul.innerHTML = html;
+    later.sort(function (a, b) { return cur(list, a).due < cur(list, b).due ? -1 : 1; });
+    const adding = ui.editing === 'new:' + list;
+    // An item being edited stays visible even if its dates move it to "later".
+    const editingLater = later.some(function (it) { return ui.editing === list + ':' + it.id; });
+    const showLater = ui.later[list] || editingLater;
 
-    const done = state[list].filter(function (i) { return i.status === 'done'; }).length;
-    $('[data-count="' + list + '"]').textContent = state[list].length ? done + ' of ' + state[list].length + ' done' : '';
-    $('[data-foot="' + list + '"]').innerHTML = ui.editing === 'new:' + list ? '' :
-      '<button type="button" class="add-btn" data-action="add-task" data-list="' + list + '"><span class="plus" aria-hidden="true">+</span> Add ' + LISTS[list].singular + '</button>';
+    let html = '';
+    if (!now.length && !adding) {
+      html += '<li class="empty">No ' + LISTS[list].plural + ' due this week.' + (later.length ? '' : ' Add one below.') + '</li>';
+    }
+    doneLast(list, now).forEach(function (it) { html += rowHTML(list, it); });
+    if (later.length && showLater) {
+      html += '<li class="later-head">Due later</li>';
+      doneLast(list, later).forEach(function (it) { html += rowHTML(list, it); });
+    }
+    if (adding) {
+      html += '<li class="new-item">' + Form.html({ context: list, draft: blankDraft(list), isNew: true }) + '</li>';
+    }
+    ul.innerHTML = html;
+    $$('form[data-form="item"]', ul).forEach(function (f) { Form.update(f); });
+
+    const done = now.filter(function (i) { return statusOf(list, i) === 'done'; }).length;
+    $('[data-count="' + list + '"]').textContent = now.length ? done + ' of ' + now.length + ' done' : '';
+    let foot = '';
+    if (!adding) {
+      foot += '<button type="button" class="add-btn" data-action="add-task" data-list="' + list + '"><span class="plus" aria-hidden="true">+</span> Add ' + LISTS[list].singular + '</button>';
+    }
+    if (later.length && !editingLater) {
+      foot += '<button type="button" class="link later-toggle" data-action="toggle-later" data-list="' + list + '" aria-expanded="' + showLater + '">' +
+        (showLater ? 'Hide later' : later.length + ' due later') + '</button>';
+    }
+    $('[data-foot="' + list + '"]').innerHTML = foot;
 
     if (animate && !reduceMotion.matches) {
       $$('li[data-id]', ul).forEach(function (li) {
@@ -261,72 +393,19 @@
     });
   }
 
-  function saveTask(form) {
-    const list = form.dataset.list;
-    const f = form.elements;
-    const name = f.name.value.trim();
-    const due = f.due.value;
-    $$('.field-error', form).forEach(function (e) { e.remove(); });
-    let error = '';
-    if (!name) error = 'Add a name.';
-    else if (!D.isValid(due)) error = 'Pick a due date.';
-    if (error) {
-      form.querySelector('.form-actions').insertAdjacentHTML('beforebegin', '<p class="field-error">' + error + '</p>');
-      (name ? f.due : f.name).focus();
-      return;
-    }
-    const recurring = f.recurring.checked;
-    const data = {
-      name: name,
-      module: f.module.value.trim(),
-      source: f.source.value.trim(),
-      details: f.details.value.trim(),
-      schedule: parseSchedule(f.schedule.value),
-      recurring: recurring,
-      dueOffset: recurring ? D.diffDays(state.weekOf, due) : 6,
-      dueDate: recurring ? '' : due
-    };
-    let id = form.dataset.id;
-    if (id) {
-      Object.assign(state[list].find(function (i) { return i.id === id; }), data);
-    } else {
-      id = uid(list[0]);
-      state[list].push(Object.assign({ id: id, status: 'todo' }, data));
-    }
-    ui.editing = null;
-    save();
-    renderTasks(list, !form.dataset.id);
-    renderHeader();
-    focusLater('[data-list="' + list + '"] li[data-id="' + id + '"] .task-main');
-  }
-
-  function deleteTask(list, id) {
-    const idx = state[list].findIndex(function (i) { return i.id === id; });
-    if (idx < 0) return;
-    const [item] = state[list].splice(idx, 1);
-    ui.open.delete(list + ':' + id);
-    save();
-    renderTasks(list, true);
-    renderHeader();
-    toast('Deleted “' + item.name + '”', function () {
-      state[list].splice(Math.min(idx, state[list].length), 0, item);
-      save();
-      renderTasks(list, true);
-      renderHeader();
-    });
-  }
-
   /* ---------- Status menu ---------- */
 
   const menu = $('#status-menu');
   let menuTarget = null;
 
   function openMenu(btn) {
-    const it = state[btn.dataset.list].find(function (i) { return i.id === btn.dataset.id; });
+    const list = btn.dataset.list;
+    const it = find(list, btn.dataset.id);
     if (!it) return;
-    menuTarget = { list: btn.dataset.list, id: it.id };
+    menuTarget = { list: list, id: it.id, view: ui.view };
+    const status = statusOf(list, it);
     menu.innerHTML = ['todo', 'doing', 'done'].map(function (s) {
-      return '<button type="button" role="menuitemradio" data-status="' + s + '" aria-checked="' + (it.status === s) + '">' +
+      return '<button type="button" role="menuitemradio" data-status="' + s + '" aria-checked="' + (status === s) + '">' +
         '<span class="dot s-' + s + '"></span>' + STATUS[s].label + '<span class="key">' + STATUS[s].key + '</span></button>';
     }).join('');
     menu.hidden = false;
@@ -335,30 +414,36 @@
     let top = r.bottom + 4;
     if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
     menu.style.top = Math.max(8, top) + 'px';
-    menu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8)) + 'px';
     const current = menu.querySelector('[aria-checked="true"]');
     (current || menu.firstElementChild).focus();
+  }
+
+  function statusBtnSelector(t) {
+    return (t.view === 'calendar' ? '#cal-side' : '[data-list="' + t.list + '"]') +
+      ' [data-action="status"][data-list="' + t.list + '"][data-id="' + t.id + '"]';
   }
 
   function closeMenu(refocus) {
     if (menu.hidden) return;
     menu.hidden = true;
-    if (refocus && menuTarget) focusLater('[data-list="' + menuTarget.list + '"] li[data-id="' + menuTarget.id + '"] .status-btn');
+    if (refocus && menuTarget) focusLater(statusBtnSelector(menuTarget));
     menuTarget = null;
   }
 
   function setStatus(status) {
     if (!menuTarget) return;
     const t = menuTarget;
-    const it = state[t.list].find(function (i) { return i.id === t.id; });
+    const it = find(t.list, t.id);
     closeMenu(false);
-    if (it && it.status !== status) {
+    if (it && statusOf(t.list, it) !== status) {
       it.status = status;
+      it.statusOn = cur(t.list, it).due;
       save();
-      renderTasks(t.list, true);
-      renderHeader();
+      if (ui.view === 'calendar') refresh();
+      else { renderTasks(t.list, true); renderHeader(); }
     }
-    focusLater('[data-list="' + t.list + '"] li[data-id="' + t.id + '"] .status-btn');
+    focusLater(statusBtnSelector(t));
   }
 
   menu.addEventListener('click', function (e) {
@@ -471,7 +556,7 @@
     }
     let id = form.dataset.id;
     if (id) {
-      const c = state.classes.find(function (x) { return x.id === id; });
+      const c = find('classes', id);
       c.name = name; c.components = comps;
     } else {
       id = uid('c');
@@ -499,131 +584,364 @@
 
   /* ---------- Essential Dates ---------- */
 
-  function sortedDates() {
-    return state.dates.slice().sort(function (a, b) {
-      return a.start < b.start ? -1 : a.start > b.start ? 1 : (a.end || a.start) < (b.end || b.start) ? -1 : 1;
-    });
-  }
-
-  function relText(d) {
-    const end = d.end || d.start;
+  function relText(o) {
+    const end = o.end || o.start;
     if (end < ui.today) return '';
-    if (d.start <= ui.today) return d.end && d.end !== d.start ? 'Now' : 'Today';
-    const n = D.diffDays(ui.today, d.start);
+    if (o.start <= ui.today) return o.end ? 'Now' : 'Today';
+    const n = D.diffDays(ui.today, o.start);
     if (n === 1) return 'Tomorrow';
     if (n < 14) return 'In ' + n + ' days';
     return 'In ' + Math.round(n / 7) + ' weeks';
   }
 
-  function dateFormHTML(d) {
-    const v = d || { title: '', start: ui.today, end: '', note: '' };
-    return '<form class="form date-form' + (d ? '' : ' new') + '" data-form="date" data-id="' + (d ? d.id : '') + '" novalidate>' +
-      '<label class="full">What’s happening<input type="text" name="title" value="' + esc(v.title) + '" placeholder="e.g. Essay due" required></label>' +
-      '<label>Date<input type="date" name="start" value="' + esc(v.start) + '" required></label>' +
-      '<label>End date (for a range)<input type="date" name="end" value="' + esc(v.end) + '"></label>' +
-      '<label class="full">Note<input type="text" name="note" value="' + esc(v.note) + '" placeholder="Optional"></label>' +
-      '<div class="form-actions"><button type="submit" class="btn primary">' + (d ? 'Save changes' : 'Add date') + '</button>' +
-      '<button type="button" class="btn" data-action="cancel-edit">Cancel</button></div></form>';
-  }
-
   function renderDates() {
     const ul = $('#dates');
     const year = D.parse(ui.today).getFullYear();
-    const list = sortedDates();
-    const next = list.find(function (d) { return d.start > ui.today; });
+    const list = state.dates.map(function (d) { return { d: d, o: cur('dates', d) }; }).sort(function (a, b) {
+      const ea = a.o.end || a.o.start, eb = b.o.end || b.o.start;
+      return a.o.start < b.o.start ? -1 : a.o.start > b.o.start ? 1 : ea < eb ? -1 : ea > eb ? 1 : 0;
+    });
+    const next = list.find(function (x) { return x.o.start > ui.today; });
     let html = '';
-    if (!list.length && ui.editing !== 'new:date') html = '<li class="empty">No dates yet. Add one below.</li>';
-    list.forEach(function (d) {
-      if (ui.editing === 'date:' + d.id) { html += '<li class="date-item" data-id="' + d.id + '">' + dateFormHTML(d) + '</li>'; return; }
-      const end = d.end || d.start;
+    if (!list.length && ui.editing !== 'new:dates') html = '<li class="empty">No dates yet. Add one below.</li>';
+    list.forEach(function (x) {
+      const d = x.d, o = x.o;
+      if (ui.editing === 'dates:' + d.id) {
+        html += '<li class="date-item" data-id="' + d.id + '">' + Form.html({ context: 'dates', draft: toDraft('dates', d), isNew: false, store: 'dates', id: d.id }) + '</li>';
+        return;
+      }
+      const end = o.end || o.start;
       const cls = ['date-item'];
       if (end < ui.today) cls.push('past');
-      else if (d.start <= ui.today) cls.push('current');
-      if (next && d.start === next.start) cls.push('next');
+      else if (o.start <= ui.today) cls.push('current');
+      if (next && o.start === next.o.start) cls.push('next');
+      const sub = [d.note, d.repeat ? R.describe(d, 'dates') + '.' : ''].filter(Boolean).join(' ');
       html += '<li class="' + cls.join(' ') + '" data-id="' + d.id + '"><div class="date-row">' +
-        '<span class="date-when">' + esc(D.range(d.start, d.end, year)) + '</span>' +
-        '<span><span class="date-title">' + esc(d.title) + '</span>' + (d.note ? '<span class="date-note">' + esc(d.note) + '</span>' : '') + '</span>' +
-        '<span class="date-side"><span class="rel">' + relText(d) + '</span><span class="date-actions">' +
+        '<span class="date-when">' + esc(D.range(o.start, o.end, year)) + '</span>' +
+        '<span><span class="date-title">' + esc(d.title) + '</span>' + (sub ? '<span class="date-note">' + esc(sub) + '</span>' : '') + '</span>' +
+        '<span class="date-side"><span class="rel">' + relText(o) + '</span><span class="date-actions">' +
           '<button type="button" class="link" data-action="edit-date" data-id="' + d.id + '" aria-label="Edit ' + esc(d.title) + '">Edit</button>' +
-          '<button type="button" class="link danger" data-action="delete-date" data-id="' + d.id + '" aria-label="Delete ' + esc(d.title) + '">Delete</button>' +
+          '<button type="button" class="link danger" data-action="delete-item" data-store="dates" data-id="' + d.id + '" aria-label="Delete ' + esc(d.title) + '">Delete</button>' +
         '</span></span></div></li>';
     });
-    if (ui.editing === 'new:date') html += '<li class="new-item">' + dateFormHTML(null) + '</li>';
+    if (ui.editing === 'new:dates') {
+      html += '<li class="new-item">' + Form.html({ context: 'dates', draft: blankDraft('dates'), isNew: true }) + '</li>';
+    }
     ul.innerHTML = html;
-    const upcoming = list.filter(function (d) { return (d.end || d.start) >= ui.today; }).length;
+    $$('form[data-form="item"]', ul).forEach(function (f) { Form.update(f); });
+    const upcoming = list.filter(function (x) { return (x.o.end || x.o.start) >= ui.today; }).length;
     $('#dates-meta').textContent = upcoming + ' upcoming';
-    $('#dates-foot').innerHTML = ui.editing === 'new:date' ? '' :
+    $('#dates-foot').innerHTML = ui.editing === 'new:dates' ? '' :
       '<button type="button" class="add-btn" data-action="add-date"><span class="plus" aria-hidden="true">+</span> Add date</button>';
   }
 
-  function saveDate(form) {
-    const f = form.elements;
-    const title = f.title.value.trim();
-    const start = f.start.value;
-    let end = f.end.value;
-    $$('.field-error', form).forEach(function (e) { e.remove(); });
-    let bad = '';
-    if (!title) bad = 'Add a title.';
-    else if (!D.isValid(start)) bad = 'Pick a date.';
-    else if (end && !D.isValid(end)) bad = 'The end date isn’t valid.';
-    else if (end && end < start) bad = 'The end date must be after the start date.';
-    if (bad) {
-      form.querySelector('.form-actions').insertAdjacentHTML('beforebegin', '<p class="field-error">' + bad + '</p>');
+  /* ---------- Calendar ---------- */
+
+  // Everything happening between two dates, calculated from the same lists
+  // the dashboard uses.
+  function collect(from, to) {
+    const byDay = {};
+    function add(date, e) {
+      if (date < from || date > to) return;
+      (byDay[date] = byDay[date] || []).push(e);
+    }
+    TASKS.forEach(function (store) {
+      state[store].forEach(function (it) {
+        const type = typeOf(store, it);
+        const currentDue = cur(store, it).due;
+        R.list(it, store, from, to).forEach(function (o) {
+          const base = { store: store, id: it.id, type: type, group: groupOf(type), name: it.name, module: it.module, occ: o.due };
+          const isCurrent = o.due === currentDue;
+          add(o.due, Object.assign({ role: 'due', status: isCurrent ? statusOf(store, it) : null }, base));
+          if (o.start && o.start !== o.due) add(o.start, Object.assign({ role: 'start' }, base));
+          if (o.release && o.release !== o.due) add(o.release, Object.assign({ role: 'release' }, base));
+        });
+      });
+    });
+    state.dates.forEach(function (d) {
+      R.list(d, 'dates', from, to).forEach(function (o) {
+        const base = { store: 'dates', id: d.id, type: 'essential', group: 'essential', name: d.title, note: d.note, occ: o.start };
+        if (!o.end) { add(o.start, Object.assign({ role: 'date' }, base)); return; }
+        let day = o.start < from ? from : o.start;
+        const last = o.end > to ? to : o.end;
+        for (let i = 0; i < 400 && day <= last; i++, day = D.addDays(day, 1)) {
+          add(day, Object.assign({ role: 'range', first: day === o.start, lastDay: day === o.end, rangeStart: o.start, rangeEnd: o.end }, base));
+        }
+      });
+    });
+    state.events.forEach(function (ev) {
+      R.list(ev, 'events', from, to).forEach(function (o) {
+        const base = { store: 'events', id: ev.id, type: 'other', group: 'other', name: ev.name, note: ev.note, occ: o.due };
+        add(o.due, Object.assign({ role: 'due' }, base));
+        if (o.start && o.start !== o.due) add(o.start, Object.assign({ role: 'start' }, base));
+      });
+    });
+    const roleOrder = { range: 0, date: 0, due: 1, release: 2, start: 3 };
+    Object.keys(byDay).forEach(function (k) {
+      byDay[k].sort(function (a, b) {
+        return (GROUPS[a.group].order - GROUPS[b.group].order) || (roleOrder[a.role] - roleOrder[b.role]) || (a.name < b.name ? -1 : 1);
+      });
+    });
+    return byDay;
+  }
+
+  function chipLabel(e) {
+    if (e.role === 'start') return 'Starts: ' + e.name;
+    if (e.role === 'release') return 'Released: ' + e.name;
+    return e.name;
+  }
+
+  function roleText(e) {
+    if (e.role === 'start') return 'Starts';
+    if (e.role === 'release') return 'Released';
+    if (e.role === 'range') return D.range(e.rangeStart, e.rangeEnd, D.parse(ui.today).getFullYear());
+    if (e.store === 'events' || e.store === 'dates') return '';
+    return 'Due';
+  }
+
+  function chipHTML(e, date) {
+    const cls = ['ev', 'g-' + e.group, 'r-' + e.role];
+    if (e.status === 'done') cls.push('is-done');
+    if (e.role === 'range') {
+      if (e.first) cls.push('range-first');
+      if (e.lastDay) cls.push('range-last');
+    }
+    const showText = e.role !== 'range' || e.first || D.dayIndex(date) === 0;
+    const title = chipLabel(e) + (e.role === 'range' ? ' (' + roleText(e) + ')' : '') + (e.status ? ', ' + STATUS[e.status].label.toLowerCase() : '');
+    return '<button type="button" class="' + cls.join(' ') + '" data-action="cal-open" data-store="' + e.store + '" data-id="' + e.id + '" data-date="' + date + '" title="' + esc(title) + '">' +
+      '<span class="mk" aria-hidden="true"></span><span class="ev-t">' + (showText ? esc(chipLabel(e)) : '<span class="sr">' + esc(chipLabel(e)) + '</span>') + '</span></button>';
+  }
+
+  // Busy days (e.g. every Sunday) group three or more due items of one type
+  // into a single line; the full list is in the side panel.
+  function cellChips(items, date) {
+    const counts = {};
+    items.forEach(function (e) { if (e.role === 'due' && R.isTask(e.store)) counts[e.group] = (counts[e.group] || 0) + 1; });
+    const seen = {};
+    const out = [];
+    items.forEach(function (e) {
+      const n = counts[e.group] || 0;
+      if (e.role === 'due' && R.isTask(e.store) && n >= 3) {
+        if (seen[e.group]) return;
+        seen[e.group] = true;
+        const group = items.filter(function (x) { return x.group === e.group && x.role === 'due' && R.isTask(x.store); });
+        const done = group.filter(function (x) { return x.status === 'done'; }).length;
+        const noun = e.group === 'reading' ? 'readings' : e.group === 'maths' ? 'problem sets' : 'HW';
+        const label = n + ' ' + noun + ' due';
+        out.push('<button type="button" class="ev g-' + e.group + ' r-due' + (done === n ? ' is-done' : '') + '" data-action="cal-select" data-date="' + date + '" title="' +
+          esc(label + (done ? ', ' + done + ' done' : '') + ': ' + group.map(function (x) { return x.name; }).join(', ')) + '">' +
+          '<span class="mk" aria-hidden="true"></span><span class="ev-t">' + label + (done && done < n ? ' <span class="ev-sub">' + done + ' done</span>' : '') + '</span></button>');
+        return;
+      }
+      out.push(chipHTML(e, date));
+    });
+    return out;
+  }
+
+  function renderCalendar() {
+    const month = ui.cal.month;
+    const gridStart = D.mondayOf(month);
+    const gridEnd = D.addDays(gridStart, 41);
+    const monthNum = D.parse(month).getMonth();
+    const byDay = collect(gridStart, gridEnd);
+
+    let head = '<div class="panel-head cal-head">' +
+      '<div class="cal-nav">' +
+        '<button type="button" class="icon-btn" data-action="cal-prev" aria-label="Previous month">' + CHEV_L + '</button>' +
+        '<h2 id="cal-title" aria-live="polite">' + D.monthTitle(month) + '</h2>' +
+        '<button type="button" class="icon-btn" data-action="cal-next" aria-label="Next month">' + CHEV + '</button>' +
+        '<button type="button" class="btn small" data-action="cal-today">Today</button>' +
+      '</div>' +
+      '<button type="button" class="btn small" data-action="cal-add" data-date="' + ui.cal.selected + '"><span aria-hidden="true">+</span> Add event</button>' +
+    '</div>';
+    head += '<div class="cal-legend" aria-hidden="true">' + ['reading', 'hw', 'maths', 'essential', 'other'].map(function (g) {
+      return '<span class="lg g-' + g + '"><span class="mk"></span>' + GROUPS[g].label + '</span>';
+    }).join('') + '</div>';
+
+    let grid = '<div class="cal-grid" role="grid" aria-labelledby="cal-title"><div class="cal-row cal-dow" role="row">' +
+      ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(function (d) { return '<span role="columnheader">' + d + '</span>'; }).join('') + '</div>';
+    for (let w = 0; w < 6; w++) {
+      grid += '<div class="cal-row" role="row">';
+      for (let i = 0; i < 7; i++) {
+        const date = D.addDays(gridStart, w * 7 + i);
+        const dObj = D.parse(date);
+        const items = byDay[date] || [];
+        const cls = ['cal-cell'];
+        if (dObj.getMonth() !== monthNum) cls.push('out');
+        if (date === ui.today) cls.push('is-today');
+        if (date === ui.cal.selected) cls.push('is-selected');
+        if (i >= 5) cls.push('weekend');
+        const chips = cellChips(items, date);
+        const shown = chips.slice(0, 3);
+        const more = chips.length - shown.length;
+        grid += '<div class="' + cls.join(' ') + '" role="gridcell" data-action="cal-select" data-date="' + date + '">' +
+          '<div class="cal-top"><button type="button" class="cal-day" data-action="cal-select" data-date="' + date + '" aria-label="' + D.long(date) + (items.length ? ', ' + items.length + ' item' + (items.length > 1 ? 's' : '') : '') + '"' +
+            (date === ui.cal.selected ? ' aria-current="date"' : '') + '>' + dObj.getDate() + '</button>' +
+          '<button type="button" class="cal-add" data-action="cal-add" data-date="' + date + '" aria-label="Add event on ' + D.short(date) + '">+</button></div>' +
+          '<div class="cal-evs">' + shown.join('') +
+          (more > 0 ? '<button type="button" class="ev-more" data-action="cal-select" data-date="' + date + '">+' + more + ' more</button>' : '') +
+          '</div></div>';
+      }
+      grid += '</div>';
+    }
+    grid += '</div>';
+    $('#cal-main').innerHTML = head + grid;
+    renderSide();
+  }
+
+  function agendaRow(e) {
+    const sub = [GROUPS[e.group].label === 'Maths & Stats' ? TYPES[e.type].label : GROUPS[e.group].label];
+    if (e.module) sub.push(e.module);
+    const role = roleText(e);
+    let lead;
+    if (e.status) {
+      const st = STATUS[e.status];
+      lead = '<button type="button" class="status-btn s-' + e.status + '" data-action="status" data-list="' + e.store + '" data-id="' + e.id + '" aria-haspopup="menu" aria-label="Status: ' + st.label + '. Change status" title="' + st.label + '"><span class="dot"></span></button>';
+    } else {
+      lead = '<span class="ag-mk g-' + e.group + ' r-' + e.role + '" aria-hidden="true"><span class="mk"></span></span>';
+    }
+    return '<li class="ag-item' + (e.status === 'done' ? ' is-done' : '') + '">' + lead +
+      '<button type="button" class="ag-main" data-action="cal-open" data-store="' + e.store + '" data-id="' + e.id + '" data-date="' + (e.occ || '') + '">' +
+        '<span class="ag-name">' + esc(e.name) + '</span>' +
+        '<span class="ag-sub">' + esc(sub.join(', ')) + '</span></button>' +
+      '<span class="ag-role">' + esc(role) + '</span></li>';
+  }
+
+  function renderSide() {
+    const side = $('#cal-side');
+    const f = ui.cal.form;
+    if (f) {
+      const it = f.isNew ? null : find(f.store, f.id);
+      if (!f.isNew && !it) { ui.cal.form = null; return renderSide(); }
+      const draft = f.isNew ? blankDraft('calendar', f.date) : toDraft(f.store, it);
+      side.innerHTML = '<div class="panel-head"><h2>' + (f.isNew ? 'New event' : 'Edit event') + '</h2>' +
+        (f.isNew ? '<span class="panel-meta">' + esc(D.long(f.date)) + '</span>' : '') + '</div>' +
+        Form.html({ context: 'calendar', draft: draft, isNew: f.isNew, store: f.store, id: f.id });
+      Form.update($('form', side));
       return;
     }
-    if (end === start) end = '';
-    const data = { title: title, start: start, end: end, note: f.note.value.trim() };
-    let id = form.dataset.id;
-    if (id) Object.assign(state.dates.find(function (d) { return d.id === id; }), data);
-    else { id = uid('d'); state.dates.push(Object.assign({ id: id }, data)); }
-    ui.editing = null;
-    save();
-    renderDates();
-    focusLater('#dates li[data-id="' + id + '"] [data-action="edit-date"]');
-  }
+    const sel = ui.cal.selected;
+    const dayItems = (collect(sel, sel)[sel] || []);
+    let h = '<div class="panel-head"><h2>' + esc(D.long(sel)) + '</h2><span class="panel-meta">' +
+      (dayItems.length ? dayItems.length + (dayItems.length === 1 ? ' item' : ' items') : '') + '</span></div>';
+    h += '<ul class="agenda">' + (dayItems.length ? dayItems.map(agendaRow).join('') : '<li class="empty">Nothing on this day.</li>') + '</ul>';
+    h += '<div class="panel-foot"><button type="button" class="add-btn" data-action="cal-add" data-date="' + sel + '"><span class="plus" aria-hidden="true">+</span> Add event on ' + D.short(sel) + '</button></div>';
 
-  function deleteDate(id) {
-    const idx = state.dates.findIndex(function (d) { return d.id === id; });
-    if (idx < 0) return;
-    const [d] = state.dates.splice(idx, 1);
-    save();
-    renderDates();
-    toast('Deleted “' + d.title + '”', function () {
-      state.dates.splice(idx, 0, d);
-      save();
-      renderDates();
+    const from = D.addDays(ui.today, 1), to = D.addDays(ui.today, 7);
+    const upcoming = collect(from, to);
+    const days = Object.keys(upcoming).sort();
+    h += '<div class="upcoming"><h3>Next 7 days</h3>';
+    if (!days.length) h += '<p class="empty">Nothing coming up.</p>';
+    days.forEach(function (day) {
+      const items = upcoming[day].filter(function (e) { return e.role !== 'range' || e.first; });
+      if (!items.length) return;
+      h += '<div class="up-day"><button type="button" class="up-date" data-action="cal-select" data-date="' + day + '">' + esc(D.long(day)) + '</button><ul class="agenda compact">' +
+        items.map(agendaRow).join('') + '</ul></div>';
     });
+    h += '</div>';
+    side.innerHTML = h;
   }
 
-  /* ---------- Editing coordination ---------- */
+  function selectDay(date) {
+    ui.cal.selected = date;
+    ui.cal.form = null;
+    const m = date.slice(0, 8) + '01';
+    if (m !== ui.cal.month) ui.cal.month = m;
+    renderCalendar();
+  }
+
+  function openCalForm(form) {
+    ui.cal.form = form;
+    if (form.date) {
+      ui.cal.selected = form.date;
+      const m = form.date.slice(0, 8) + '01';
+      if (m !== ui.cal.month) ui.cal.month = m;
+    }
+    renderCalendar();
+    const first = $('#cal-side input[name="name"]');
+    if (first) first.focus();
+  }
+
+  /* ---------- Views ---------- */
+
+  function setView(view) {
+    ui.view = view;
+    closeMenu(false);
+    $('#dashboard').hidden = view !== 'dashboard';
+    $('#calendar').hidden = view !== 'calendar';
+    document.title = view === 'calendar' ? 'Calendar | TCD Understand' : 'TCD Understand';
+    refresh();
+  }
+
+  function routeFromHash() {
+    setView(location.hash === '#calendar' ? 'calendar' : 'dashboard');
+  }
+
+  function refresh(animate) {
+    renderHeader();
+    if (ui.view === 'calendar') { renderCalendar(); return; }
+    renderTasks('readings', animate);
+    renderTasks('homework', animate);
+    renderClasses();
+    renderDates();
+  }
+
+  /* ---------- Editing coordination (dashboard) ---------- */
 
   function startEditing(key) {
-    const prev = ui.editing;
     ui.editing = key;
-    rerenderFor(prev);
-    rerenderFor(key);
-    const first = document.querySelector('form[data-form] input[type="text"]');
+    refresh();
+    const first = document.querySelector('#dashboard form[data-form] input[type="text"]');
     if (first) first.focus();
   }
   function stopEditing() {
     const prev = ui.editing;
     ui.editing = null;
-    rerenderFor(prev);
-    if (prev) {
-      const [kind, id] = prev.split(':');
-      if (id && kind === 'class') focusLater('#classes li[data-id="' + id + '"] .class-name');
-      else if (id && kind === 'date') focusLater('#dates li[data-id="' + id + '"] [data-action="edit-date"]');
-      else if (id && kind !== 'new') focusLater('[data-list="' + kind + '"] li[data-id="' + id + '"] .task-main');
-      else if (kind === 'new') focusLater('[data-action^="add-"]' + (id === 'class' ? '[data-action="add-class"]' : id === 'date' ? '[data-action="add-date"]' : '[data-list="' + id + '"]'));
-    }
+    refresh();
+    if (!prev) return;
+    const [kind, id] = prev.split(':');
+    if (kind === 'class') focusLater('#classes li[data-id="' + id + '"] .class-name');
+    else if (kind === 'dates') focusLater('#dates li[data-id="' + id + '"] [data-action="edit-date"]');
+    else if (kind === 'readings' || kind === 'homework') focusLater('[data-list="' + kind + '"] li[data-id="' + id + '"] .task-main');
+    else if (id === 'class') focusLater('[data-action="add-class"]');
+    else if (id === 'dates') focusLater('[data-action="add-date"]');
+    else focusLater('[data-action="add-task"][data-list="' + id + '"]');
   }
-  function rerenderFor(key) {
-    if (!key) return;
-    const [kind, id] = key.split(':');
-    const target = kind === 'new' ? id : kind;
-    if (target === 'readings' || target === 'homework') renderTasks(target);
-    else if (target === 'class') renderClasses();
-    else if (target === 'date') renderDates();
+
+  function showError(form, res) {
+    $$('.field-error', form).forEach(function (e) { e.remove(); });
+    form.querySelector('.form-actions').insertAdjacentHTML('beforebegin', '<p class="field-error" role="alert">' + esc(res.error) + '</p>');
+    const field = form.elements[res.field];
+    if (field && field.focus) field.focus();
+  }
+
+  function submitItemForm(form) {
+    const res = Form.read(form);
+    if (res.error) { showError(form, res); return; }
+    const ctx = form.dataset.context;
+    const saved = saveDraft(res.draft, form.dataset.store || null, form.dataset.id || null);
+    const isNew = !form.dataset.id;
+
+    if (ctx === 'calendar') {
+      ui.cal.form = null;
+      selectDay(res.draft.start && res.draft.type === 'essential' ? res.draft.start : res.draft.due);
+      toast((isNew ? 'Added “' : 'Saved “') + res.draft.name + '”' + (R.isTask(saved.store) ? ' to ' + (saved.store === 'readings' ? 'Weekly Reading' : 'Weekly HW') : '') + '.');
+      return;
+    }
+
+    ui.editing = null;
+    if (R.isTask(saved.store)) {
+      if (placement(saved.store, saved.item) === 'later') {
+        ui.later[saved.store] = true;
+        if (isNew) toast('Added. It’s due ' + D.short(cur(saved.store, saved.item).due) + ', so it’s listed under Due later.');
+      }
+      ui.open.add(saved.store + ':' + saved.id);
+      refresh(isNew);
+      focusLater('[data-list="' + saved.store + '"] li[data-id="' + saved.id + '"] .task-main');
+    } else {
+      refresh();
+      focusLater('#dates li[data-id="' + saved.id + '"] [data-action="edit-date"]');
+    }
   }
 
   function focusLater(sel) {
@@ -669,10 +987,18 @@
       case 'class-toggle':
         toggleRow(el.closest('li'));
         break;
+      case 'toggle-later':
+        ui.later[el.dataset.list] = !ui.later[el.dataset.list];
+        renderTasks(el.dataset.list);
+        focusLater('[data-action="toggle-later"][data-list="' + el.dataset.list + '"]');
+        break;
       case 'edit-task': startEditing(el.dataset.list + ':' + el.dataset.id); break;
-      case 'delete-task': deleteTask(el.dataset.list, el.dataset.id); break;
       case 'add-task': startEditing('new:' + el.dataset.list); break;
-      case 'cancel-edit': stopEditing(); break;
+      case 'delete-item': deleteItem(el.dataset.store, el.dataset.id); break;
+      case 'cancel-edit':
+        if (el.closest('#cal-side')) { ui.cal.form = null; renderCalendar(); focusLater('#cal-side .add-btn'); }
+        else stopEditing();
+        break;
       case 'add-class': startEditing('new:class'); break;
       case 'edit-class': startEditing('class:' + el.dataset.id); break;
       case 'delete-class': deleteClass(el.dataset.id); break;
@@ -694,9 +1020,30 @@
         updateLiveTotal(form);
         break;
       }
-      case 'add-date': startEditing('new:date'); break;
-      case 'edit-date': startEditing('date:' + el.dataset.id); break;
-      case 'delete-date': deleteDate(el.dataset.id); break;
+      case 'add-date': startEditing('new:dates'); break;
+      case 'edit-date': startEditing('dates:' + el.dataset.id); break;
+      case 'nav':
+        if (ui.view === 'calendar') {
+          if (location.hash) history.pushState(null, '', location.pathname + location.search);
+          setView('dashboard');
+        } else {
+          location.hash = 'calendar';
+        }
+        break;
+      case 'cal-prev':
+      case 'cal-next':
+        ui.cal.month = D.addMonths(ui.cal.month, a === 'cal-prev' ? -1 : 1);
+        renderCalendar();
+        focusLater('[data-action="' + a + '"]');
+        break;
+      case 'cal-today': selectDay(ui.today); focusLater('.cal-cell.is-selected .cal-day'); break;
+      case 'cal-select':
+        if (el.classList.contains('cal-cell') && e.target !== el && e.target.closest('.cal-cell') !== el) break;
+        selectDay(el.dataset.date);
+        if (el.classList.contains('cal-day') || el.classList.contains('up-date')) focusLater('.cal-cell.is-selected .cal-day');
+        break;
+      case 'cal-add': openCalForm({ isNew: true, date: el.dataset.date || ui.cal.selected }); break;
+      case 'cal-open': openCalForm({ isNew: false, store: el.dataset.store, id: el.dataset.id, date: el.dataset.date }); break;
     }
   });
 
@@ -704,24 +1051,32 @@
     const form = e.target.closest('form[data-form]');
     if (!form) return;
     e.preventDefault();
-    if (form.dataset.form === 'task') saveTask(form);
+    if (form.dataset.form === 'item') submitItemForm(form);
     else if (form.dataset.form === 'class') saveClass(form);
-    else if (form.dataset.form === 'date') saveDate(form);
   });
 
-  document.addEventListener('input', function (e) {
+  function onFormChange(e) {
+    const form = e.target.closest('form[data-form="item"]');
+    if (form) Form.update(form, e.target);
     if (e.target.name === 'pweight') updateLiveTotal(e.target.closest('form'));
-  });
+  }
+  document.addEventListener('input', onFormChange);
+  document.addEventListener('change', onFormChange);
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      if (!menu.hidden) { closeMenu(true); return; }
-      if (ui.editing && e.target.closest('form[data-form]')) { e.preventDefault(); stopEditing(); }
-    }
+    if (e.key !== 'Escape') return;
+    if (!menu.hidden) { closeMenu(true); return; }
+    const form = e.target.closest && e.target.closest('form[data-form]');
+    if (!form) return;
+    e.preventDefault();
+    if (form.closest('#cal-side')) { ui.cal.form = null; renderCalendar(); focusLater('#cal-side .add-btn'); }
+    else if (ui.editing) stopEditing();
   });
 
   window.addEventListener('resize', function () { closeMenu(false); });
   window.addEventListener('scroll', function () { closeMenu(false); }, { passive: true });
+  window.addEventListener('hashchange', routeFromHash);
+  window.addEventListener('popstate', routeFromHash);
 
   $('#theme-toggle').addEventListener('click', function () {
     state.settings.theme = effectiveTheme() === 'dark' ? 'light' : 'dark';
@@ -752,23 +1107,32 @@
       if (!Store.valid(data)) { toast('That file isn’t a TCD Understand backup.'); return; }
       if (!window.confirm('Replace everything on this page with the backup from “' + file.name + '”?')) return;
       state = Store.normalise(data);
-      syncWeek();
       applyTheme();
       save();
-      ui.open.clear(); ui.editing = null;
-      renderAll();
+      ui.open.clear(); ui.editing = null; ui.cal.form = null;
+      refresh();
       toast('Backup imported.');
     });
   });
 
-  /* Keep the week in step with the calendar while the page stays open. */
+  /* Keep "today" in step with the calendar while the page stays open.
+     Resets need no stored changes: statuses belong to a specific due date,
+     so the new cycle simply starts as Not started. */
+  function noteRollover(prev, now) {
+    if (prev && prev < now) {
+      if (D.mondayOf(prev) !== D.mondayOf(now)) toast('New week. Reading and homework have been reset.');
+      else if (R.periodStart(prev, 2) !== R.periodStart(now, 2)) toast('New problem set week. Maths & Stats has been reset.');
+    }
+    if (state.lastSeen !== now) { state.lastSeen = now; save(); }
+  }
   function tick() {
-    const prevToday = ui.today;
-    const result = syncWeek();
-    if (!result && prevToday === ui.today) return;
-    if (ui.editing) { renderHeader(); return; } // don't wipe a form mid-edit
-    renderAll();
-    if (result === 'reset') toast('New week. Your lists have been reset.');
+    const now = D.today();
+    if (now === ui.today) return;
+    const prev = ui.today;
+    ui.today = now;
+    noteRollover(prev, now);
+    if (ui.editing || ui.cal.form) { renderHeader(); return; } // don't wipe a form mid-edit
+    refresh();
   }
   setInterval(tick, 60 * 1000);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
@@ -776,21 +1140,12 @@
 
   // Another tab changed the data.
   window.addEventListener('storage', function (e) {
-    if (e.key !== Store.KEY || !e.newValue || ui.editing) return;
-    try { state = Store.normalise(JSON.parse(e.newValue)); applyTheme(); renderAll(); } catch (err) { /* ignore */ }
+    if (e.key !== Store.KEY || !e.newValue || ui.editing || ui.cal.form) return;
+    try { state = Store.normalise(JSON.parse(e.newValue)); applyTheme(); refresh(); } catch (err) { /* ignore */ }
   });
 
-  function renderAll() {
-    renderHeader();
-    renderTasks('readings');
-    renderTasks('homework');
-    renderClasses();
-    renderDates();
-  }
-
   applyTheme();
-  const initial = syncWeek();
-  save();
-  renderAll();
-  if (initial === 'reset') toast('New week. Your lists have been reset.');
+  save(); // stores migrated data straight away
+  noteRollover(state.lastSeen, ui.today);
+  routeFromHash();
 })();

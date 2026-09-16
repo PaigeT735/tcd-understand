@@ -36,7 +36,7 @@
     </div>
   </header>
 
-  <main class="board">
+  <main class="board" id="dashboard">
     <section class="panel" id="panel-readings" aria-labelledby="h-readings">
       <div class="panel-head">
         <h2 id="h-readings">Weekly Reading</h2>
@@ -76,8 +76,13 @@
     </section>
   </main>
 
+  <main class="cal-view" id="calendar" hidden>
+    <section class="panel cal-panel" id="cal-main" aria-label="Calendar"></section>
+    <aside class="panel cal-side" id="cal-side" aria-label="Selected day"></aside>
+  </main>
+
   <footer class="bottom">
-    <p>Saved in this browser. Lists reset every Monday.</p>
+    <p>Saved in this browser. Reading and HW reset on Mondays, Maths &amp; Stats on Tuesdays.</p>
     <div class="bottom-actions">
       <button type="button" class="link" id="export">Export backup</button>
       <button type="button" class="link" id="import">Import backup</button>
@@ -85,12 +90,15 @@
     </div>
   </footer>
 
+  <button type="button" class="nav-toggle" id="nav-toggle" data-action="nav"></button>
   <div class="status-menu" id="status-menu" role="menu" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="js/dates.js"></script>
+  <script src="js/recur.js"></script>
   <script src="js/seed.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/form.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

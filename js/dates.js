@@ -2,6 +2,7 @@
    time zones and daylight saving never shift a due date. */
 (function () {
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -63,6 +64,25 @@
 
   function weekday(iso) { return DAYS[parse(iso).getDay()]; }
 
+  // Monday = 0 … Sunday = 6
+  function dayIndex(iso) { return (parse(iso).getDay() + 6) % 7; }
+
+  // Adds whole months, clamping to the end of shorter months (Jan 31 + 1 month = Feb 28).
+  function addMonths(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const total = (m - 1) + n;
+    const year = y + Math.floor(total / 12);
+    const month = ((total % 12) + 12) % 12;
+    const last = new Date(year, month + 1, 0).getDate();
+    return year + '-' + pad(month + 1) + '-' + pad(Math.min(d, last));
+  }
+
+  // "September 2026"
+  function monthTitle(iso) {
+    const d = parse(iso);
+    return FULL_MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+  }
+
   // "Sep 15th", "Oct 26th–30th", "Sep 15th–Oct 20th", "Jan 18th, 2027"
   function range(start, end, refYear) {
     const a = parse(start);
@@ -82,5 +102,5 @@
     return first + '–' + second + (yearA !== refYear ? ', ' + yearA : '');
   }
 
-  window.D = { toISO, parse, isValid, today, addDays, diffDays, mondayOf, short, long, weekday, range, ordinal };
+  window.D = { toISO, parse, isValid, today, addDays, addMonths, diffDays, mondayOf, short, long, weekday, dayIndex, monthTitle, range, ordinal, DAYS };
 })();

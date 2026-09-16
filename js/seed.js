@@ -1,18 +1,33 @@
 /* Starting data, taken from the Michaelmas 2026 study context file.
-   Recurring items store dueOffset: days after that week's Monday
-   (0 = Monday, 6 = Sunday, 7 = the following Monday). */
+
+   Class-schedule items (repeat.preset 'weekly' on a Reading/HW/Maths item)
+   store dueOffset: days after the start of their weekly cycle.
+   Reading and HW cycles start Monday (6 = Sunday).
+   Maths & Stats cycles start Tuesday (1 = Wednesday release, 7 = next Tuesday).
+   anchor is the first cycle the item appears in. */
+(function () {
+  const UNTIL = '2026-12-08'; // end of Week 12's problem-set cycle
+  function classWeek(extra) {
+    return Object.assign({
+      subject: '', start: '', due: '', startOffset: null, status: 'todo', statusOn: '',
+      repeat: { preset: 'weekly', freq: 'weekly', interval: 1, days: [], until: UNTIL }
+    }, extra);
+  }
+  function reading(extra) { return classWeek(Object.assign({ kind: 'reading', dueOffset: 6, anchor: '2026-09-14' }, extra)); }
+  function hw(extra) { return classWeek(Object.assign({ kind: 'hw', dueOffset: 6, anchor: '2026-09-14' }, extra)); }
+
 window.SEED = {
-  version: 1,
+  version: 2,
   term: {
     name: 'Michaelmas Term 2026',
     start: '2026-09-14',
     weeks: 12,
-    readingWeek: 7
+    readingWeek: 7,
+    repeatUntil: UNTIL
   },
   readings: [
-    {
+    reading({
       id: 'r-fin', name: 'Finance chapters', module: 'Intro to Finance',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'S&S chapters are on Blackboard. Brealey et al., Fundamentals of Corporate Finance (McGraw-Hill): hard copies in the library, ebook link on Blackboard.',
       details: '',
       schedule: {
@@ -29,17 +44,15 @@ window.SEED = {
         11: 'S&S Ch 16 (Dividend policy I & II)',
         12: 'S&S Ch 16 (Evidence on dividend policies; module round-up)'
       }
-    },
-    {
+    }),
+    reading({
       id: 'r-econ', name: 'Varian chapters', module: 'Economics A',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Hal R. Varian, Intermediate Microeconomics with Calculus, 1st edition. Location not confirmed yet (check Blackboard or the library).',
       details: 'Chapters are assigned each week.',
       schedule: {}
-    },
-    {
+    }),
+    reading({
       id: 'r-ob', name: 'Bratton chapters + posted readings', module: 'Organisational Behaviour',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Bratton (2015) on ProQuest: https://www.proquest.com/docview/2474617577/bookReader?accountid=14404&sourcetype=Books — extra weekly readings are posted on Blackboard.',
       details: 'The lecturer confirms the chapters each week.',
       schedule: {
@@ -55,55 +68,48 @@ window.SEED = {
         10: 'Ch 18 (Organisational change)',
         11: 'Ch 13 & 14 (Decision-making, ethics; power, politics & conflict)'
       }
-    },
-    {
+    }),
+    reading({
       id: 'r-ft', name: 'Financial Times', module: 'Intro to Finance',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Free with your TCD login: https://www-ft-com.elib.tcd.ie/ — also via https://libguides.tcd.ie/az.php?q=financial%20times',
       details: 'Read regularly. App setup instructions are in a Blackboard announcement.',
       schedule: {}
-    },
-    {
+    }),
+    reading({
       id: 'r-econ-mag', name: 'The Economist', module: 'Intro to Finance',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'ProQuest: http://search.proquest.com/publication/417164 (link may need checking)',
       details: 'Read regularly.',
       schedule: {}
-    }
+    })
   ],
   homework: [
-    {
+    classWeek({
       id: 'h-maths', name: 'Problem set (graded)', module: 'Maths & Stats A',
-      recurring: true, dueOffset: 7, status: 'todo',
-      source: 'Released every Wednesday, due the following Monday.',
+      kind: 'maths', subject: 'Math', dueOffset: 7, anchor: '2026-09-15',
+      source: 'Released every Wednesday, due the following Tuesday.',
       details: 'Counts toward 10% of the module. Include answers and full working. Office hours: Wednesdays 14:00–16:00, Arts Building room 3017.',
       schedule: {}
-    },
-    {
+    }),
+    hw({
       id: 'h-econ-ps', name: 'Problem set', module: 'Economics A',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Blackboard (to confirm)', details: 'Separate from the weekly worksheet.', schedule: {}
-    },
-    {
+    }),
+    hw({
       id: 'h-econ-ws', name: 'Worksheet', module: 'Economics A',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Blackboard (to confirm)', details: 'Separate from the weekly problem set.', schedule: {}
-    },
-    {
+    }),
+    hw({
       id: 'h-fin-q', name: 'Weekly questions', module: 'Intro to Finance',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Blackboard', details: 'Questions on that week’s topic.', schedule: {}
-    },
-    {
+    }),
+    hw({
       id: 'h-fin-t', name: 'Practice test', module: 'Intro to Finance',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Blackboard', details: 'Not graded, but good prep for the term test and final exam.', schedule: {}
-    },
-    {
+    }),
+    hw({
       id: 'h-span', name: 'Weekly homework', module: 'Spanish',
-      recurring: true, dueOffset: 6, status: 'todo',
       source: 'Blackboard (to confirm)', details: 'May count toward the 50% continuous assessment (to confirm).', schedule: {}
-    }
+    })
   ],
   classes: [
     { id: 'c-econ', name: 'Economics A', components: [
@@ -116,7 +122,7 @@ window.SEED = {
     ] },
     { id: 'c-maths', name: 'Maths & Stats A', components: [
       { id: 'c1', name: 'In-person exam', weight: 90, note: '' },
-      { id: 'c2', name: 'Weekly problem sets', weight: 10, note: 'Due Mondays' }
+      { id: 'c2', name: 'Weekly problem sets', weight: 10, note: 'Due Tuesdays' }
     ] },
     { id: 'c-ob', name: 'Organisational Behaviour', components: [
       { id: 'c1', name: 'End-of-year MCQ exam', weight: 50, note: '' },
@@ -135,15 +141,17 @@ window.SEED = {
     ] }
   ],
   dates: [
-    { id: 'd1', title: 'Teaching starts', start: '2026-09-14', end: '', note: '' },
-    { id: 'd2', title: 'Reading Week', start: '2026-10-26', end: '2026-10-30', note: 'No classes. Oct 26 is a public holiday.' },
-    { id: 'd3', title: 'Economics A online midterm due (30%)', start: '2026-11-01', end: '', note: 'Do it during Reading Week.' },
-    { id: 'd4', title: 'Finance in-class term test (20%)', start: '2026-11-02', end: '', note: 'Date to confirm. Covers Weeks 1–6.' },
-    { id: 'd5', title: 'Teaching restarts', start: '2026-11-02', end: '', note: '' },
-    { id: 'd6', title: 'Teaching ends', start: '2026-12-04', end: '', note: '' },
-    { id: 'd7', title: 'Revision period', start: '2026-12-07', end: '2026-12-10', note: '' },
-    { id: 'd8', title: 'Semester 1 exams', start: '2026-12-11', end: '2026-12-22', note: 'Check the official exam timetable.' },
-    { id: 'd9', title: 'Hilary Term starts', start: '2027-01-18', end: '', note: '' }
+    { id: 'd1', title: 'Teaching starts', start: '2026-09-14', end: '', note: '', repeat: null },
+    { id: 'd2', title: 'Reading Week', start: '2026-10-26', end: '2026-10-30', note: 'No classes. Oct 26 is a public holiday.', repeat: null },
+    { id: 'd3', title: 'Economics A online midterm due (30%)', start: '2026-11-01', end: '', note: 'Do it during Reading Week.', repeat: null },
+    { id: 'd4', title: 'Finance in-class term test (20%)', start: '2026-11-02', end: '', note: 'Date to confirm. Covers Weeks 1–6.', repeat: null },
+    { id: 'd5', title: 'Teaching restarts', start: '2026-11-02', end: '', note: '', repeat: null },
+    { id: 'd6', title: 'Teaching ends', start: '2026-12-04', end: '', note: '', repeat: null },
+    { id: 'd7', title: 'Revision period', start: '2026-12-07', end: '2026-12-10', note: '', repeat: null },
+    { id: 'd8', title: 'Semester 1 exams', start: '2026-12-11', end: '2026-12-22', note: 'Check the official exam timetable.', repeat: null },
+    { id: 'd9', title: 'Hilary Term starts', start: '2027-01-18', end: '', note: '', repeat: null }
   ],
+  events: [],
   settings: { theme: 'system' }
 };
+})();
