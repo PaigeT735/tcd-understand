@@ -77,6 +77,11 @@
     s.term = Object.assign({}, seed.term, s.term || {});
     s.settings = Object.assign({ theme: 'system' }, s.settings || {});
     s.events = Array.isArray(s.events) ? s.events : [];
+    s.order = s.order && typeof s.order === 'object' ? s.order : {};
+    TASKS.forEach(function (k) {
+      if (!Array.isArray(s.order[k])) delete s.order[k];
+      else s.order[k] = s.order[k].filter(function (id) { return typeof id === 'string'; });
+    });
     TASKS.forEach(function (k) {
       s[k] = s[k].filter(function (it) { return it && it.id; });
       s[k].forEach(function (it) {

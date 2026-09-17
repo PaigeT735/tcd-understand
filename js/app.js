@@ -8,7 +8,7 @@
     editing: null,       // dashboard form: "readings:id", "new:readings", "class:id", "new:class", "dates:id", "new:dates"
     later: { readings: false, homework: false },
     today: D.today(),
-    cal: { month: '', selected: '', form: null } // form: { isNew, store, id, date }
+    cal: { month: '', selected: '', form: null, view: null } // form: { isNew, store, id, date, back }, view: { store, id, occ }
   };
   ui.cal.selected = ui.today;
   ui.cal.month = ui.today.slice(0, 8) + '01';
@@ -74,6 +74,11 @@
   }
   function groupOf(type) { return type === 'math' || type === 'stats' ? 'maths' : (type === 'essential' || type === 'other' || type === 'hw' || type === 'reading' ? type : 'other'); }
   function nameOf(store, it) { return store === 'dates' ? it.title : it.name; }
+  // Class first: the class is the heading, the task sits underneath.
+  function headOf(it) { return it.module ? it.module : it.name; }
+  function subOf(it) { return it.module ? it.name : ''; }
+  function lowerFirst(t) { return t ? t.charAt(0).toLowerCase() + t.slice(1) : t; }
+  const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   function typeLabel(store, it) {
     const t = typeOf(store, it);
     if (store === 'homework' && it.kind === 'maths') return it.subject ? it.subject + ' problem set' : 'Maths & Stats problem set';
@@ -182,6 +187,7 @@
     ui.open.delete(store + ':' + id);
     if (ui.editing === store + ':' + id) ui.editing = null;
     if (ui.cal.form && ui.cal.form.id === id) ui.cal.form = null;
+    if (ui.cal.view && ui.cal.view.id === id) ui.cal.view = null;
     save();
     refresh(true);
     toast('Deleted “' + nameOf(store, removed) + '”', function () {
@@ -264,19 +270,20 @@
   function dueCell(it, c, status) {
     const due = c.due;
     const cls = ['task-due'];
-    let title = D.long(due);
+    let when = SHORT_DAYS[D.parse(due).getDay()];
     if (status !== 'done') {
-      if (due === ui.today) { cls.push('today'); title += ' (today)'; }
-      else if (due < ui.today) { cls.push('late'); title += ' (overdue)'; }
+      if (due === ui.today) { cls.push('today'); when = 'Today'; }
+      else if (due === D.addDays(ui.today, 1)) { when = 'Tomorrow'; }
+      else if (due < ui.today) { cls.push('late'); when = 'Overdue'; }
     }
-    return '<span class="' + cls.join(' ') + '" title="' + title + '">' + D.short(due) + '</span>';
+    return '<span class="' + cls.join(' ') + '" title="Due ' + D.long(due) + '"><span class="due-date">' + D.short(due) + '</span><span class="due-when">' + when + '</span></span>';
   }
 
   function detailHTML(list, it, c) {
     const wk = termWeek(D.mondayOf(ui.today));
     let rows = '';
-    if (it.module) rows += '<dt>Module</dt><dd>' + esc(it.module) + '</dd>';
-    rows += '<dt>What</dt><dd>' + esc(it.name) + '</dd>';
+    rows += '<dt>Class</dt><dd>' + (it.module ? esc(it.module) : '<span class="repeat-tag">Not set</span>') + '</dd>';
+    rows += '<dt>Task</dt><dd>' + esc(it.name) + '</dd>';
     if (list === 'homework') rows += '<dt>Type</dt><dd>' + esc(typeLabel(list, it)) + '</dd>';
     if (it.schedule[wk]) rows += '<dt>This week</dt><dd>' + linkify(it.schedule[wk]) + '</dd>';
     if (it.schedule[wk + 1]) rows += '<dt>Next week</dt><dd>' + linkify(it.schedule[wk + 1]) + '</dd>';
@@ -285,14 +292,16 @@
     if (c.release) rows += '<dt>Released</dt><dd>' + esc(D.long(c.release)) + '</dd>';
     if (c.start) rows += '<dt>Starts</dt><dd>' + esc(D.long(c.start)) + '</dd>';
     rows += '<dt>Due</dt><dd>' + esc(D.long(c.due)) +
-      ' <span class="repeat-tag">(' + (it.repeat ? esc(R.describe(it, list).toLowerCase()) : 'one-off') + ')</span></dd>';
+      ' <span class="repeat-tag">(' + (it.repeat ? esc(lowerFirst(R.describe(it, list))) : 'doesn’t repeat') + ')</span></dd>';
     rows += '<dd class="actions">' +
       '<button type="button" class="link" data-action="edit-task" data-list="' + list + '" data-id="' + it.id + '">Edit</button>' +
       '<button type="button" class="link danger" data-action="delete-item" data-store="' + list + '" data-id="' + it.id + '">Delete</button></dd>';
     return '<dl class="detail">' + rows + '</dl>';
   }
 
-  function rowHTML(list, it) {
+  const GRIP = '<svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></g></svg>';
+
+  function rowHTML(list, it, group) {
     const key = list + ':' + it.id;
     const editing = ui.editing === key;
     const open = editing || ui.open.has(key);
@@ -302,23 +311,64 @@
     const body = editing
       ? Form.html({ context: list, draft: toDraft(list, it), isNew: false, store: list, id: it.id })
       : detailHTML(list, it, c);
-    return '<li class="task' + (status === 'done' ? ' done' : '') + (open ? ' open' : '') + '" data-id="' + it.id + '" data-key="' + key + '">' +
+    const label = headOf(it) + (subOf(it) ? ', ' + subOf(it) : '');
+    return '<li class="task' + (status === 'done' ? ' done' : '') + (open ? ' open' : '') + '" data-id="' + it.id + '" data-key="' + key + '" data-group="' + group + '">' +
       '<div class="task-row">' +
+        '<button type="button" class="grip" data-grip aria-label="Move ' + esc(label) + '. Use the up and down arrow keys." title="Drag to reorder">' + GRIP + '</button>' +
         '<button type="button" class="status-btn s-' + status + '" data-action="status" data-list="' + list + '" data-id="' + it.id + '" aria-haspopup="menu" aria-label="Status: ' + st.label + '. Change status" title="' + st.label + '"><span class="dot"></span></button>' +
         '<button type="button" class="task-main" data-action="toggle" aria-expanded="' + open + '">' +
-          '<span class="task-name">' + esc(it.name) + '</span>' +
-          (it.module ? '<span class="task-module">' + esc(it.module) + '</span>' : '') +
+          '<span class="task-name">' + esc(headOf(it)) + '</span>' +
+          (subOf(it) ? '<span class="task-module">' + esc(subOf(it)) + '</span>' : '') +
         '</button>' +
         dueCell(it, c, status) +
-        '<button type="button" class="chev" data-action="toggle" aria-expanded="' + open + '" aria-label="' + (open ? 'Hide' : 'Show') + ' details for ' + esc(it.name) + '">' + CHEV + '</button>' +
+        '<button type="button" class="chev" data-action="toggle" aria-expanded="' + open + '" aria-label="' + (open ? 'Hide' : 'Show') + ' details for ' + esc(headOf(it) + (subOf(it) ? ', ' + subOf(it) : '')) + '">' + CHEV + '</button>' +
       '</div>' +
       '<div class="reveal"><div class="reveal-inner">' + body + '</div></div>' +
     '</li>';
   }
 
-  function doneLast(list, items) {
-    return items.filter(function (i) { return statusOf(list, i) !== 'done'; })
-      .concat(items.filter(function (i) { return statusOf(list, i) === 'done'; }));
+  const STATUS_RANK = { doing: 0, todo: 1, done: 2 };
+
+  // Automatic order: earliest due first; on the same day In progress, then
+  // Not started. (Completed items are split off into their own group.)
+  function autoSort(list, items) {
+    return items.map(function (it, i) {
+      return { it: it, i: i, due: cur(list, it).due, rank: STATUS_RANK[statusOf(list, it)], head: headOf(it).toLowerCase() };
+    }).sort(function (a, b) {
+      return a.due < b.due ? -1 : a.due > b.due ? 1 :
+        (a.rank - b.rank) || (a.head < b.head ? -1 : a.head > b.head ? 1 : a.i - b.i);
+    }).map(function (x) { return x.it; });
+  }
+
+  function hasCustomOrder(list) {
+    return !!(state.order && Array.isArray(state.order[list]) && state.order[list].length);
+  }
+
+  // Once a list has been dragged, the saved order wins. Items that aren't in
+  // it yet (new ones) are slotted in by due date.
+  function ordered(list, items) {
+    const auto = autoSort(list, items);
+    if (!hasCustomOrder(list)) return auto;
+    const pos = {};
+    state.order[list].forEach(function (id, i) { pos[id] = i; });
+    const placed = items.filter(function (it) { return pos[it.id] != null; })
+      .sort(function (a, b) { return pos[a.id] - pos[b.id]; });
+    auto.forEach(function (it) {
+      if (pos[it.id] != null) return;
+      const due = cur(list, it).due;
+      const at = placed.findIndex(function (x) { return cur(list, x).due > due; });
+      if (at < 0) placed.push(it); else placed.splice(at, 0, it);
+    });
+    return placed;
+  }
+
+  // Completed items always sit at the bottom of their group.
+  function splitDone(list, items) {
+    const all = ordered(list, items);
+    return {
+      active: all.filter(function (i) { return statusOf(list, i) !== 'done'; }),
+      done: all.filter(function (i) { return statusOf(list, i) === 'done'; })
+    };
   }
 
   function renderTasks(list, animate) {
@@ -334,7 +384,6 @@
       if (p === 'now') now.push(it);
       else if (p === 'later') later.push(it);
     });
-    later.sort(function (a, b) { return cur(list, a).due < cur(list, b).due ? -1 : 1; });
     const adding = ui.editing === 'new:' + list;
     // An item being edited stays visible even if its dates move it to "later".
     const editingLater = later.some(function (it) { return ui.editing === list + ':' + it.id; });
@@ -344,10 +393,14 @@
     if (!now.length && !adding) {
       html += '<li class="empty">No ' + LISTS[list].plural + ' due this week.' + (later.length ? '' : ' Add one below.') + '</li>';
     }
-    doneLast(list, now).forEach(function (it) { html += rowHTML(list, it); });
+    const n = splitDone(list, now);
+    n.active.forEach(function (it) { html += rowHTML(list, it, 'now'); });
+    n.done.forEach(function (it) { html += rowHTML(list, it, 'now-done'); });
     if (later.length && showLater) {
       html += '<li class="later-head">Due later</li>';
-      doneLast(list, later).forEach(function (it) { html += rowHTML(list, it); });
+      const l = splitDone(list, later);
+      l.active.forEach(function (it) { html += rowHTML(list, it, 'later'); });
+      l.done.forEach(function (it) { html += rowHTML(list, it, 'later-done'); });
     }
     if (adding) {
       html += '<li class="new-item">' + Form.html({ context: list, draft: blankDraft(list), isNew: true }) + '</li>';
@@ -361,10 +414,15 @@
     if (!adding) {
       foot += '<button type="button" class="add-btn" data-action="add-task" data-list="' + list + '"><span class="plus" aria-hidden="true">+</span> Add ' + LISTS[list].singular + '</button>';
     }
+    let right = '';
+    if (hasCustomOrder(list)) {
+      right += '<button type="button" class="link later-toggle" data-action="auto-sort" data-list="' + list + '" title="You’ve arranged this list by hand. Click to go back to automatic order.">Sort by due date</button>';
+    }
     if (later.length && !editingLater) {
-      foot += '<button type="button" class="link later-toggle" data-action="toggle-later" data-list="' + list + '" aria-expanded="' + showLater + '">' +
+      right += '<button type="button" class="link later-toggle" data-action="toggle-later" data-list="' + list + '" aria-expanded="' + showLater + '">' +
         (showLater ? 'Hide later' : later.length + ' due later') + '</button>';
     }
+    if (right) foot += '<span class="foot-right">' + right + '</span>';
     $('[data-foot="' + list + '"]').innerHTML = foot;
 
     if (animate && !reduceMotion.matches) {
@@ -393,10 +451,115 @@
     });
   }
 
+  /* ---------- Reordering (drag, or arrow keys on the handle) ---------- */
+
+  function saveOrderFromDOM(list) {
+    const ul = $('[data-list="' + list + '"]');
+    const shown = $$('li.task[data-id]', ul).map(function (li) { return li.dataset.id; });
+    const rest = ordered(list, state[list]).map(function (it) { return it.id; })
+      .filter(function (id) { return shown.indexOf(id) < 0; });
+    state.order = state.order || {};
+    state.order[list] = shown.concat(rest);
+    save();
+  }
+
+  function siblingsOf(li) {
+    return $$('li.task[data-group="' + li.dataset.group + '"]', li.parentElement);
+  }
+
+  function slide(el, fromTop) {
+    if (reduceMotion.matches) return;
+    const d = fromTop - el.getBoundingClientRect().top;
+    if (Math.abs(d) > 1) el.animate([{ transform: 'translateY(' + d + 'px)' }, { transform: 'none' }], { duration: 160, easing: 'ease-out' });
+  }
+
+  let drag = null;
+
+  document.addEventListener('pointerdown', function (e) {
+    const grip = e.target.closest('[data-grip]');
+    if (!grip || e.button > 0 || ui.editing) return;
+    const li = grip.closest('li.task');
+    if (siblingsOf(li).length < 2) return;
+    e.preventDefault();
+    closeMenu(false);
+    try { grip.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
+    drag = { li: li, list: li.parentElement.dataset.list, startY: e.clientY, startTop: li.offsetTop, moved: false };
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved) {
+      if (Math.abs(dy) < 4) return;
+      drag.moved = true;
+      drag.li.classList.add('dragging');
+      document.body.classList.add('is-dragging');
+    }
+    const li = drag.li;
+    const top = drag.startTop + dy;
+    const sibs = siblingsOf(li);
+    const i = sibs.indexOf(li);
+    const prev = sibs[i - 1], next = sibs[i + 1];
+    if (prev && top < prev.offsetTop + prev.offsetHeight / 2) {
+      const r = prev.getBoundingClientRect().top;
+      li.parentElement.insertBefore(li, prev);
+      slide(prev, r);
+    } else if (next && top + li.offsetHeight > next.offsetTop + next.offsetHeight / 2) {
+      const r = next.getBoundingClientRect().top;
+      li.parentElement.insertBefore(next, li);
+      slide(next, r);
+    }
+    li.style.transform = 'translateY(' + (top - li.offsetTop) + 'px)';
+    if (e.clientY < 48) window.scrollBy(0, -12);
+    else if (e.clientY > window.innerHeight - 48) window.scrollBy(0, 12);
+  });
+
+  function endDrag() {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    document.body.classList.remove('is-dragging');
+    if (!d.moved) return;
+    d.li.classList.remove('dragging');
+    d.li.style.transform = '';
+    saveOrderFromDOM(d.list);
+    renderTasks(d.list);
+    focusLater('[data-list="' + d.list + '"] li[data-id="' + d.li.dataset.id + '"] [data-grip]');
+  }
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
+
+  document.addEventListener('keydown', function (e) {
+    const grip = e.target.closest && e.target.closest('[data-grip]');
+    if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const li = grip.closest('li.task');
+    const sibs = siblingsOf(li);
+    const i = sibs.indexOf(li);
+    const j = e.key === 'ArrowUp' ? i - 1 : i + 1;
+    if (j < 0 || j >= sibs.length) return;
+    if (j < i) li.parentElement.insertBefore(li, sibs[j]);
+    else li.parentElement.insertBefore(sibs[j], li);
+    const list = li.parentElement.dataset.list;
+    saveOrderFromDOM(list);
+    renderTasks(list);
+    focusLater('[data-list="' + list + '"] li[data-id="' + li.dataset.id + '"] [data-grip]');
+  });
+
   /* ---------- Status menu ---------- */
 
   const menu = $('#status-menu');
   let menuTarget = null;
+  let menuAnchor = null;
+
+  function positionMenu() {
+    const r = menuAnchor.getBoundingClientRect();
+    const mh = menu.offsetHeight, mw = menu.offsetWidth;
+    let top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
+    menu.style.top = Math.max(8, top) + 'px';
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8)) + 'px';
+  }
 
   function openMenu(btn) {
     const list = btn.dataset.list;
@@ -409,12 +572,8 @@
         '<span class="dot s-' + s + '"></span>' + STATUS[s].label + '<span class="key">' + STATUS[s].key + '</span></button>';
     }).join('');
     menu.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const mh = menu.offsetHeight, mw = menu.offsetWidth;
-    let top = r.bottom + 4;
-    if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
-    menu.style.top = Math.max(8, top) + 'px';
-    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8)) + 'px';
+    menuAnchor = btn;
+    positionMenu();
     const current = menu.querySelector('[aria-checked="true"]');
     (current || menu.firstElementChild).focus();
   }
@@ -427,6 +586,7 @@
   function closeMenu(refocus) {
     if (menu.hidden) return;
     menu.hidden = true;
+    menuAnchor = null;
     if (refocus && menuTarget) focusLater(statusBtnSelector(menuTarget));
     menuTarget = null;
   }
@@ -690,6 +850,7 @@
     if (e.role === 'release') return 'Released: ' + e.name;
     return e.name;
   }
+  function fullLabel(e) { return (e.module ? e.module + ': ' : '') + chipLabel(e); }
 
   function roleText(e) {
     if (e.role === 'start') return 'Starts';
@@ -707,9 +868,19 @@
       if (e.lastDay) cls.push('range-last');
     }
     const showText = e.role !== 'range' || e.first || D.dayIndex(date) === 0;
-    const title = chipLabel(e) + (e.role === 'range' ? ' (' + roleText(e) + ')' : '') + (e.status ? ', ' + STATUS[e.status].label.toLowerCase() : '');
-    return '<button type="button" class="' + cls.join(' ') + '" data-action="cal-open" data-store="' + e.store + '" data-id="' + e.id + '" data-date="' + date + '" title="' + esc(title) + '">' +
-      '<span class="mk" aria-hidden="true"></span><span class="ev-t">' + (showText ? esc(chipLabel(e)) : '<span class="sr">' + esc(chipLabel(e)) + '</span>') + '</span></button>';
+    let title = fullLabel(e);
+    if (e.role === 'range') title += ' (' + roleText(e) + ')';
+    else if (e.role === 'due' && R.isTask(e.store)) title += ', due ' + D.long(date);
+    if (e.status) title += ', ' + STATUS[e.status].label.toLowerCase();
+    let text;
+    if (!showText) text = '<span class="sr">' + esc(chipLabel(e)) + '</span>';
+    else if (e.module) {
+      cls.push('two');
+      const item = e.role === 'release' ? 'Released: ' + e.name : e.role === 'start' ? 'Starts: ' + e.name : e.name;
+      text = '<span class="ev-c">' + esc(e.module) + '</span><span class="ev-i">' + esc(item) + '</span>';
+    } else text = '<span class="ev-c">' + esc(chipLabel(e)) + '</span>';
+    return '<button type="button" class="' + cls.join(' ') + '" data-action="cal-open" data-store="' + e.store + '" data-id="' + e.id + '" data-occ="' + esc(e.occ || '') + '" data-date="' + date + '" title="' + esc(title) + '">' +
+      '<span class="mk" aria-hidden="true"></span><span class="ev-t">' + text + '</span></button>';
   }
 
   // Busy days (e.g. every Sunday) group three or more due items of one type
@@ -728,9 +899,11 @@
         const done = group.filter(function (x) { return x.status === 'done'; }).length;
         const noun = e.group === 'reading' ? 'readings' : e.group === 'maths' ? 'problem sets' : 'HW';
         const label = n + ' ' + noun + ' due';
-        out.push('<button type="button" class="ev g-' + e.group + ' r-due' + (done === n ? ' is-done' : '') + '" data-action="cal-select" data-date="' + date + '" title="' +
-          esc(label + (done ? ', ' + done + ' done' : '') + ': ' + group.map(function (x) { return x.name; }).join(', ')) + '">' +
-          '<span class="mk" aria-hidden="true"></span><span class="ev-t">' + label + (done && done < n ? ' <span class="ev-sub">' + done + ' done</span>' : '') + '</span></button>');
+        const classes = group.map(function (x) { return x.module || x.name; }).filter(function (v, k, a) { return a.indexOf(v) === k; });
+        out.push('<button type="button" class="ev two g-' + e.group + ' r-due' + (done === n ? ' is-done' : '') + '" data-action="cal-select" data-date="' + date + '" title="' +
+          esc(label + (done ? ', ' + done + ' done' : '') + ': ' + group.map(fullLabel).join('; ')) + '">' +
+          '<span class="mk" aria-hidden="true"></span><span class="ev-t"><span class="ev-c">' + label + '</span>' +
+          '<span class="ev-i">' + esc(classes.join(', ')) + '</span></span></button>');
         return;
       }
       out.push(chipHTML(e, date));
@@ -772,14 +945,14 @@
         if (date === ui.cal.selected) cls.push('is-selected');
         if (i >= 5) cls.push('weekend');
         const chips = cellChips(items, date);
-        const shown = chips.slice(0, 3);
+        const shown = chips.length <= 3 ? chips : chips.slice(0, 2);
         const more = chips.length - shown.length;
         grid += '<div class="' + cls.join(' ') + '" role="gridcell" data-action="cal-select" data-date="' + date + '">' +
           '<div class="cal-top"><button type="button" class="cal-day" data-action="cal-select" data-date="' + date + '" aria-label="' + D.long(date) + (items.length ? ', ' + items.length + ' item' + (items.length > 1 ? 's' : '') : '') + '"' +
             (date === ui.cal.selected ? ' aria-current="date"' : '') + '>' + dObj.getDate() + '</button>' +
           '<button type="button" class="cal-add" data-action="cal-add" data-date="' + date + '" aria-label="Add event on ' + D.short(date) + '">+</button></div>' +
           '<div class="cal-evs">' + shown.join('') +
-          (more > 0 ? '<button type="button" class="ev-more" data-action="cal-select" data-date="' + date + '">+' + more + ' more</button>' : '') +
+          (more > 0 ? '<button type="button" class="ev-more" data-action="cal-select" data-date="' + date + '" aria-label="Show all ' + items.length + ' items on ' + D.short(date) + '">+' + more + ' more</button>' : '') +
           '</div></div>';
       }
       grid += '</div>';
@@ -789,9 +962,11 @@
     renderSide();
   }
 
+  function typeName(e) { return e.group === 'maths' ? TYPES[e.type].label : GROUPS[e.group].label; }
+
   function agendaRow(e) {
-    const sub = [GROUPS[e.group].label === 'Maths & Stats' ? TYPES[e.type].label : GROUPS[e.group].label];
-    if (e.module) sub.push(e.module);
+    const head = e.module || chipLabel(e);
+    const subText = e.module ? chipLabel(e) : typeName(e);
     const role = roleText(e);
     let lead;
     if (e.status) {
@@ -801,9 +976,9 @@
       lead = '<span class="ag-mk g-' + e.group + ' r-' + e.role + '" aria-hidden="true"><span class="mk"></span></span>';
     }
     return '<li class="ag-item' + (e.status === 'done' ? ' is-done' : '') + '">' + lead +
-      '<button type="button" class="ag-main" data-action="cal-open" data-store="' + e.store + '" data-id="' + e.id + '" data-date="' + (e.occ || '') + '">' +
-        '<span class="ag-name">' + esc(e.name) + '</span>' +
-        '<span class="ag-sub">' + esc(sub.join(', ')) + '</span></button>' +
+      '<button type="button" class="ag-main" data-action="cal-open" data-store="' + e.store + '" data-id="' + e.id + '" data-occ="' + esc(e.occ || '') + '" data-date="' + (e.occ || '') + '" title="' + esc(typeName(e)) + '">' +
+        '<span class="ag-name">' + esc(head) + '</span>' +
+        '<span class="ag-sub">' + (e.status ? '<span class="mk g-' + e.group + '" aria-hidden="true"></span>' : '') + esc(subText) + '</span></button>' +
       '<span class="ag-role">' + esc(role) + '</span></li>';
   }
 
@@ -818,6 +993,13 @@
         (f.isNew ? '<span class="panel-meta">' + esc(D.long(f.date)) + '</span>' : '') + '</div>' +
         Form.html({ context: 'calendar', draft: draft, isNew: f.isNew, store: f.store, id: f.id });
       Form.update($('form', side));
+      return;
+    }
+    if (ui.cal.view) {
+      const v = ui.cal.view;
+      const it = find(v.store, v.id);
+      if (!it) { ui.cal.view = null; return renderSide(); }
+      side.innerHTML = viewHTML(v.store, it, v.occ);
       return;
     }
     const sel = ui.cal.selected;
@@ -842,24 +1024,83 @@
     side.innerHTML = h;
   }
 
+  // Read-only details for one item, shown when it's clicked on the calendar.
+  function viewHTML(store, it, occ) {
+    const type = typeOf(store, it);
+    const group = groupOf(type);
+    const task = R.isTask(store);
+    const head = task ? headOf(it) : nameOf(store, it);
+    const c = cur(store, it);
+    let rows = '';
+    if (task && it.module) rows += '<dt>Task</dt><dd>' + esc(it.name) + '</dd>';
+    if (store === 'dates') {
+      const o = it.repeat && occ ? (R.list(it, store, occ, occ)[0] || c) : c;
+      rows += '<dt>When</dt><dd>' + esc(o.end ? D.range(o.start, o.end, D.parse(ui.today).getFullYear()) : D.long(o.start)) + '</dd>';
+    } else {
+      const o = task && R.isAcademic(it) ? (R.list(it, store, occ || c.due, occ || c.due).filter(function (x) { return x.due === (occ || c.due); })[0] || c)
+        : (it.repeat && occ ? { due: occ, start: it.start ? D.addDays(occ, D.diffDays(it.due, it.start)) : '' } : c);
+      if (o.release) rows += '<dt>Released</dt><dd>' + esc(D.long(o.release)) + '</dd>';
+      if (o.start) rows += '<dt>Starts</dt><dd>' + esc(D.long(o.start)) + '</dd>';
+      rows += '<dt>' + (task ? 'Due' : 'Date') + '</dt><dd>' + esc(D.long(o.due)) + '</dd>';
+    }
+    rows += '<dt>Repeats</dt><dd>' + (it.repeat ? esc(R.describe(it, store)) : 'Doesn’t repeat') + '</dd>';
+    if (task && it.source) rows += '<dt>Where to find it</dt><dd>' + linkify(it.source) + '</dd>';
+    const note = task ? it.details : it.note;
+    if (note) rows += '<dt>Notes</dt><dd>' + linkify(note) + '</dd>';
+    if (task) {
+      const st = statusOf(store, it);
+      const isCurrent = !occ || occ === c.due;
+      rows += '<dt>Status</dt><dd class="view-status">' +
+        '<button type="button" class="status-btn s-' + st + '" data-action="status" data-list="' + store + '" data-id="' + it.id + '" aria-haspopup="menu" aria-label="Status: ' + STATUS[st].label + '. Change status"><span class="dot"></span></button>' +
+        '<span>' + STATUS[st].label + (isCurrent ? '' : '<span class="repeat-tag"> (for the one due ' + esc(D.short(c.due)) + ')</span>') + '</span></dd>';
+    }
+    return '<div class="panel-head view-head"><div><p class="view-type"><span class="mk g-' + group + '" aria-hidden="true"></span>' + esc(TYPES[type].label) + '</p>' +
+        '<h2>' + esc(head) + '</h2></div></div>' +
+      '<dl class="detail view-detail">' + rows + '</dl>' +
+      '<div class="form-actions view-actions"><button type="button" class="btn" data-action="cal-edit" data-store="' + store + '" data-id="' + it.id + '">Edit</button>' +
+        '<button type="button" class="link danger" data-action="delete-item" data-store="' + store + '" data-id="' + it.id + '">Delete</button>' +
+        '<span class="spacer"></span><button type="button" class="link" data-action="cal-back">Back to ' + esc(D.short(ui.cal.selected)) + '</button></div>';
+  }
+
   function selectDay(date) {
     ui.cal.selected = date;
     ui.cal.form = null;
+    ui.cal.view = null;
     const m = date.slice(0, 8) + '01';
     if (m !== ui.cal.month) ui.cal.month = m;
     renderCalendar();
   }
 
+  function openCalView(view) {
+    ui.cal.view = view;
+    ui.cal.form = null;
+    if (view.date && view.date !== ui.cal.selected) {
+      ui.cal.selected = view.date;
+      const m = view.date.slice(0, 8) + '01';
+      if (m !== ui.cal.month) ui.cal.month = m;
+    }
+    renderCalendar();
+    focusLater('#cal-side [data-action="cal-edit"]');
+  }
+
+  function closeCalForm() {
+    const f = ui.cal.form;
+    ui.cal.form = null;
+    if (f && f.back) ui.cal.view = f.back;
+    renderCalendar();
+    focusLater(ui.cal.view ? '#cal-side [data-action="cal-edit"]' : '#cal-side .add-btn');
+  }
+
   function openCalForm(form) {
     ui.cal.form = form;
+    if (form.isNew) ui.cal.view = null;
     if (form.date) {
       ui.cal.selected = form.date;
       const m = form.date.slice(0, 8) + '01';
       if (m !== ui.cal.month) ui.cal.month = m;
     }
     renderCalendar();
-    const first = $('#cal-side input[name="name"]');
-    if (first) first.focus();
+    focusFirstField('#cal-side form');
   }
 
   /* ---------- Views ---------- */
@@ -877,8 +1118,16 @@
     setView(location.hash === '#calendar' ? 'calendar' : 'dashboard');
   }
 
+  function renderClassOptions() {
+    const names = {};
+    state.classes.forEach(function (c) { names[c.name] = true; });
+    TASKS.forEach(function (k) { state[k].forEach(function (it) { if (it.module) names[it.module] = true; }); });
+    $('#class-options').innerHTML = Object.keys(names).sort().map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('');
+  }
+
   function refresh(animate) {
     renderHeader();
+    renderClassOptions();
     if (ui.view === 'calendar') { renderCalendar(); return; }
     renderTasks('readings', animate);
     renderTasks('homework', animate);
@@ -891,8 +1140,7 @@
   function startEditing(key) {
     ui.editing = key;
     refresh();
-    const first = document.querySelector('#dashboard form[data-form] input[type="text"]');
-    if (first) first.focus();
+    focusFirstField('#dashboard form[data-form]');
   }
   function stopEditing() {
     const prev = ui.editing;
@@ -925,6 +1173,10 @@
     if (ctx === 'calendar') {
       ui.cal.form = null;
       selectDay(res.draft.start && res.draft.type === 'essential' ? res.draft.start : res.draft.due);
+      if (!isNew) {
+        ui.cal.view = { store: saved.store, id: saved.id, occ: '' };
+        renderCalendar();
+      }
       toast((isNew ? 'Added “' : 'Saved “') + res.draft.name + '”' + (R.isTask(saved.store) ? ' to ' + (saved.store === 'readings' ? 'Weekly Reading' : 'Weekly HW') : '') + '.');
       return;
     }
@@ -942,6 +1194,13 @@
       refresh();
       focusLater('#dates li[data-id="' + saved.id + '"] [data-action="edit-date"]');
     }
+  }
+
+  function focusFirstField(formSel) {
+    const form = document.querySelector(formSel);
+    if (!form) return;
+    const field = Array.from(form.querySelectorAll('input[type="text"]')).find(function (i) { return !i.closest('[hidden]'); });
+    if (field) field.focus();
   }
 
   function focusLater(sel) {
@@ -987,6 +1246,13 @@
       case 'class-toggle':
         toggleRow(el.closest('li'));
         break;
+      case 'auto-sort':
+        if (state.order) delete state.order[el.dataset.list];
+        save();
+        renderTasks(el.dataset.list, true);
+        toast('Sorted by due date.');
+        focusLater('[data-action="add-task"][data-list="' + el.dataset.list + '"]');
+        break;
       case 'toggle-later':
         ui.later[el.dataset.list] = !ui.later[el.dataset.list];
         renderTasks(el.dataset.list);
@@ -996,7 +1262,7 @@
       case 'add-task': startEditing('new:' + el.dataset.list); break;
       case 'delete-item': deleteItem(el.dataset.store, el.dataset.id); break;
       case 'cancel-edit':
-        if (el.closest('#cal-side')) { ui.cal.form = null; renderCalendar(); focusLater('#cal-side .add-btn'); }
+        if (el.closest('#cal-side')) closeCalForm();
         else stopEditing();
         break;
       case 'add-class': startEditing('new:class'); break;
@@ -1043,7 +1309,14 @@
         if (el.classList.contains('cal-day') || el.classList.contains('up-date')) focusLater('.cal-cell.is-selected .cal-day');
         break;
       case 'cal-add': openCalForm({ isNew: true, date: el.dataset.date || ui.cal.selected }); break;
-      case 'cal-open': openCalForm({ isNew: false, store: el.dataset.store, id: el.dataset.id, date: el.dataset.date }); break;
+      case 'cal-open': openCalView({ store: el.dataset.store, id: el.dataset.id, occ: el.dataset.occ || '', date: el.dataset.date }); break;
+      case 'cal-edit': {
+        const back = ui.cal.view;
+        ui.cal.view = null;
+        openCalForm({ isNew: false, store: el.dataset.store, id: el.dataset.id, back: back });
+        break;
+      }
+      case 'cal-back': ui.cal.view = null; renderCalendar(); focusLater('.cal-cell.is-selected .cal-day'); break;
     }
   });
 
@@ -1067,14 +1340,23 @@
     if (e.key !== 'Escape') return;
     if (!menu.hidden) { closeMenu(true); return; }
     const form = e.target.closest && e.target.closest('form[data-form]');
+    if (!form && ui.view === 'calendar' && ui.cal.view && !ui.cal.form) {
+      ui.cal.view = null; renderCalendar(); focusLater('.cal-cell.is-selected .cal-day'); return;
+    }
     if (!form) return;
     e.preventDefault();
-    if (form.closest('#cal-side')) { ui.cal.form = null; renderCalendar(); focusLater('#cal-side .add-btn'); }
+    if (form.closest('#cal-side')) closeCalForm();
     else if (ui.editing) stopEditing();
   });
 
   window.addEventListener('resize', function () { closeMenu(false); });
-  window.addEventListener('scroll', function () { closeMenu(false); }, { passive: true });
+  // While the page scrolls, the menu follows its button; it closes once the button is off screen.
+  window.addEventListener('scroll', function () {
+    if (menu.hidden || !menuAnchor) return;
+    const r = menuAnchor.getBoundingClientRect();
+    if (!menuAnchor.isConnected || r.bottom < 0 || r.top > window.innerHeight) closeMenu(false);
+    else positionMenu();
+  }, { passive: true });
   window.addEventListener('hashchange', routeFromHash);
   window.addEventListener('popstate', routeFromHash);
 
