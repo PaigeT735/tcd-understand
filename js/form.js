@@ -83,7 +83,7 @@
         '<div class="rep-line"><span class="rep-label">Ends</span><span class="rep-ctrl">' +
           '<label><input type="radio" name="ends" value="never"' + (r.until ? '' : ' checked') + '> Never</label>' +
           '<span class="ends-on"><label><input type="radio" name="ends" value="on"' + (r.until ? ' checked' : '') + '> On</label>' +
-          '<input type="date" name="until" value="' + esc(r.until) + '" aria-label="Repeat end date"></span></span></div>' +
+          DatePicker.field('until', esc(r.until), ' aria-label="Repeat end date"') + '</span></span></div>' +
       '</div></fieldset>';
   }
 
@@ -105,9 +105,9 @@
     h += '<label class="full"><span data-show="academic">' + (o.context === 'calendar' ? 'What to do' : c.name) + '</span><span data-show="not-academic">' + c.name + '</span>' +
       '<input type="text" name="name" value="' + esc(d.name) + '" required placeholder="' + esc(c.placeholder) + '"></label>';
     h += '<label><span data-show="not-essential">Start date (optional)</span><span data-show="essential">From (optional, for a range)</span>' +
-      '<input type="date" name="start" value="' + esc(d.start) + '"></label>';
+      DatePicker.field('start', esc(d.start)) + '</label>';
     h += '<label><span data-show="not-essential">Due date</span><span data-show="essential">Date</span>' +
-      '<input type="date" name="due" value="' + esc(d.due) + '" required></label>';
+      DatePicker.field('due', esc(d.due), ' required') + '</label>';
     h += repeatHTML(d.repeat);
     if (c.types.some(function (t) { return TYPES[t].academic; })) {
       h += '<label class="full" data-show="academic">Where to find it<textarea name="source" rows="2" placeholder="Blackboard, library, a link…">' + esc(d.source) + '</textarea></label>';
