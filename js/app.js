@@ -86,7 +86,16 @@
   }
 
   // Where a task belongs on the dashboard: this week, later, or no longer relevant.
+  // A section chosen by dragging (it.pin) wins for as long as the same
+  // occurrence is current, just like statuses.
   function placement(store, it) {
+    const natural = naturalPlacement(store, it);
+    if (natural === 'hidden') return natural;
+    if (it.pin && it.pin.on === cur(store, it).due) return it.pin.section;
+    return natural;
+  }
+
+  function naturalPlacement(store, it) {
     const weekMon = D.mondayOf(ui.today);
     const weekSun = D.addDays(weekMon, 6);
     const c = cur(store, it);
@@ -151,6 +160,7 @@
         status: prev && prev.status ? prev.status : 'todo', statusOn: prev && prev.statusOn ? prev.statusOn : '',
         start: '', due: '', dueOffset: 6, startOffset: null, anchor: '', repeat: repeat
       };
+      if (prev && prev.pin) item.pin = prev.pin;
       if (R.isAcademic(item)) {
         const P = R.periodForDue(item.kind, draft.due);
         item.dueOffset = D.diffDays(P, draft.due);
@@ -279,7 +289,7 @@
     return '<span class="' + cls.join(' ') + '" title="Due ' + D.long(due) + '"><span class="due-date">' + D.short(due) + '</span><span class="due-when">' + when + '</span></span>';
   }
 
-  function detailHTML(list, it, c) {
+  function detailHTML(list, it, c, section) {
     const wk = termWeek(D.mondayOf(ui.today));
     let rows = '';
     rows += '<dt>Class</dt><dd>' + (it.module ? esc(it.module) : '<span class="repeat-tag">Not set</span>') + '</dd>';
@@ -295,13 +305,15 @@
       ' <span class="repeat-tag">(' + (it.repeat ? esc(lowerFirst(R.describe(it, list))) : 'doesn’t repeat') + ')</span></dd>';
     rows += '<dd class="actions">' +
       '<button type="button" class="link" data-action="edit-task" data-list="' + list + '" data-id="' + it.id + '">Edit</button>' +
-      '<button type="button" class="link danger" data-action="delete-item" data-store="' + list + '" data-id="' + it.id + '">Delete</button></dd>';
+      '<button type="button" class="link danger" data-action="delete-item" data-store="' + list + '" data-id="' + it.id + '">Delete</button>' +
+      '<button type="button" class="link" data-action="move-section" data-list="' + list + '" data-id="' + it.id + '" data-to="' + (section === 'later' ? 'now' : 'later') + '">' +
+        (section === 'later' ? 'Move to This week' : 'Move to Due later') + '</button></dd>';
     return '<dl class="detail">' + rows + '</dl>';
   }
 
   const GRIP = '<svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></g></svg>';
 
-  function rowHTML(list, it, group) {
+  function rowHTML(list, it, section) {
     const key = list + ':' + it.id;
     const editing = ui.editing === key;
     const open = editing || ui.open.has(key);
@@ -310,11 +322,11 @@
     const st = STATUS[status];
     const body = editing
       ? Form.html({ context: list, draft: toDraft(list, it), isNew: false, store: list, id: it.id })
-      : detailHTML(list, it, c);
+      : detailHTML(list, it, c, section);
     const label = headOf(it) + (subOf(it) ? ', ' + subOf(it) : '');
-    return '<li class="task' + (status === 'done' ? ' done' : '') + (open ? ' open' : '') + '" data-id="' + it.id + '" data-key="' + key + '" data-group="' + group + '">' +
+    return '<li class="task' + (status === 'done' ? ' done' : '') + (open ? ' open' : '') + '" data-id="' + it.id + '" data-key="' + key + '" data-section="' + section + '" data-done="' + (status === 'done' ? 1 : 0) + '">' +
       '<div class="task-row">' +
-        '<button type="button" class="grip" data-grip aria-label="Move ' + esc(label) + '. Use the up and down arrow keys." title="Drag to reorder">' + GRIP + '</button>' +
+        '<button type="button" class="grip" data-grip aria-label="Move ' + esc(label) + '. Use the up and down arrow keys to move it, including between This week and Due later." title="Drag to move">' + GRIP + '</button>' +
         '<button type="button" class="status-btn s-' + status + '" data-action="status" data-list="' + list + '" data-id="' + it.id + '" aria-haspopup="menu" aria-label="Status: ' + st.label + '. Change status" title="' + st.label + '"><span class="dot"></span></button>' +
         '<button type="button" class="task-main" data-action="toggle" aria-expanded="' + open + '">' +
           '<span class="task-name">' + esc(headOf(it)) + '</span>' +
@@ -393,14 +405,19 @@
     if (!now.length && !adding) {
       html += '<li class="empty">No ' + LISTS[list].plural + ' due this week.' + (later.length ? '' : ' Add one below.') + '</li>';
     }
+    if (later.length && showLater && now.length) {
+      html += '<li class="section-head" data-section="now">This week</li>';
+    }
     const n = splitDone(list, now);
     n.active.forEach(function (it) { html += rowHTML(list, it, 'now'); });
-    n.done.forEach(function (it) { html += rowHTML(list, it, 'now-done'); });
-    if (later.length && showLater) {
-      html += '<li class="later-head">Due later</li>';
-      const l = splitDone(list, later);
-      l.active.forEach(function (it) { html += rowHTML(list, it, 'later'); });
-      l.done.forEach(function (it) { html += rowHTML(list, it, 'later-done'); });
+    n.done.forEach(function (it) { html += rowHTML(list, it, 'now'); });
+    if (later.length) {
+      html += laterHead(list, later.length, showLater, editingLater);
+      if (showLater) {
+        const l = splitDone(list, later);
+        l.active.forEach(function (it) { html += rowHTML(list, it, 'later'); });
+        l.done.forEach(function (it) { html += rowHTML(list, it, 'later'); });
+      }
     }
     if (adding) {
       html += '<li class="new-item">' + Form.html({ context: list, draft: blankDraft(list), isNew: true }) + '</li>';
@@ -418,10 +435,6 @@
     if (hasCustomOrder(list)) {
       right += '<button type="button" class="link later-toggle" data-action="auto-sort" data-list="' + list + '" title="You’ve arranged this list by hand. Click to go back to automatic order.">Sort by due date</button>';
     }
-    if (later.length && !editingLater) {
-      right += '<button type="button" class="link later-toggle" data-action="toggle-later" data-list="' + list + '" aria-expanded="' + showLater + '">' +
-        (showLater ? 'Hide later' : later.length + ' due later') + '</button>';
-    }
     if (right) foot += '<span class="foot-right">' + right + '</span>';
     $('[data-foot="' + list + '"]').innerHTML = foot;
 
@@ -438,6 +451,13 @@
     }
   }
 
+  function laterHead(list, count, open, locked) {
+    return '<li class="section-head later-head" data-section="later">' +
+      '<span>Due later <span class="sec-count">' + (count ? count : '') + '</span></span>' +
+      (count && !locked ? '<button type="button" class="link" data-action="toggle-later" data-list="' + list + '" aria-expanded="' + open + '">' + (open ? 'Hide' : 'Show') + '</button>' : '') +
+      '</li>';
+  }
+
   function toggleRow(li) {
     const key = li.dataset.key;
     if (ui.editing === key) return;
@@ -451,100 +471,230 @@
     });
   }
 
-  /* ---------- Reordering (drag, or arrow keys on the handle) ---------- */
+  /* ---------- Moving items: drag, arrow keys, or "Move to" ---------- */
 
-  function saveOrderFromDOM(list) {
-    const ul = $('[data-list="' + list + '"]');
-    const shown = $$('li.task[data-id]', ul).map(function (li) { return li.dataset.id; });
-    const rest = ordered(list, state[list]).map(function (it) { return it.id; })
+  const live = $('#sr-live');
+  function announce(msg) {
+    live.textContent = '';
+    setTimeout(function () { live.textContent = msg; }, 30);
+  }
+  const FOLLOWS = Node.DOCUMENT_POSITION_FOLLOWING;
+  const SECTION_NAME = { now: 'This week', later: 'Due later' };
+
+  function laterHeadIn(ul) { return ul.querySelector(':scope > li.section-head[data-section="later"]'); }
+  function taskRows(ul) { return $$(':scope > li.task', ul); }
+  function slotRows(ul) { return $$(':scope > li.task, :scope > li.section-head[data-section="later"]', ul); }
+
+  function sectionOfRow(li) {
+    const head = laterHeadIn(li.parentElement);
+    return head && (head.compareDocumentPosition(li) & FOLLOWS) ? 'later' : 'now';
+  }
+
+  // Completed items stay below unfinished ones within a section.
+  function keepDoneOrder(li) {
+    const ul = li.parentElement;
+    const sec = sectionOfRow(li);
+    const same = taskRows(ul).filter(function (x) { return x !== li && sectionOfRow(x) === sec; });
+    if (li.dataset.done !== '1') {
+      const firstDone = same.find(function (x) { return x.dataset.done === '1'; });
+      if (firstDone && (firstDone.compareDocumentPosition(li) & FOLLOWS)) ul.insertBefore(li, firstDone);
+    } else {
+      const active = same.filter(function (x) { return x.dataset.done !== '1'; });
+      const last = active[active.length - 1];
+      if (last && (li.compareDocumentPosition(last) & FOLLOWS)) ul.insertBefore(li, last.nextSibling);
+    }
+  }
+
+  function markTarget(ul, li) {
+    const head = laterHeadIn(ul);
+    if (head) head.classList.toggle('drop-target', sectionOfRow(li) === 'later');
+  }
+
+  // Save the new order and section of a moved row, then redraw.
+  function commitMove(li, list) {
+    const it = find(list, li.dataset.id);
+    if (!it) return;
+    const ul = li.parentElement;
+    const section = sectionOfRow(li);
+    const before = placement(list, it);
+    const shown = taskRows(ul).map(function (x) { return x.dataset.id; });
+    const rest = ordered(list, state[list]).map(function (x) { return x.id; })
       .filter(function (id) { return shown.indexOf(id) < 0; });
     state.order = state.order || {};
     state.order[list] = shown.concat(rest);
+    if (section === naturalPlacement(list, it)) delete it.pin;
+    else it.pin = { section: section, on: cur(list, it).due };
+    if (section === 'later') ui.later[list] = true;
     save();
-  }
-
-  function siblingsOf(li) {
-    return $$('li.task[data-group="' + li.dataset.group + '"]', li.parentElement);
-  }
-
-  function slide(el, fromTop) {
-    if (reduceMotion.matches) return;
-    const d = fromTop - el.getBoundingClientRect().top;
-    if (Math.abs(d) > 1) el.animate([{ transform: 'translateY(' + d + 'px)' }, { transform: 'none' }], { duration: 160, easing: 'ease-out' });
+    renderTasks(list);
+    renderHeader();
+    const rows = taskRows(ul).filter(function (x) { return x.dataset.section === section; });
+    const pos = rows.findIndex(function (x) { return x.dataset.id === it.id; }) + 1;
+    announce((before !== section ? 'Moved to ' + SECTION_NAME[section] + '. ' : '') + 'Position ' + pos + ' of ' + rows.length + ' in ' + SECTION_NAME[section] + '.');
+    if (before !== section) toast('Moved to ' + SECTION_NAME[section] + '.');
   }
 
   let drag = null;
+  let suppressClick = false;
+
+  // A click that ends a drag shouldn't also open or toggle anything.
+  document.addEventListener('click', function (e) {
+    if (!suppressClick) return;
+    suppressClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 
   document.addEventListener('pointerdown', function (e) {
-    const grip = e.target.closest('[data-grip]');
-    if (!grip || e.button > 0 || ui.editing) return;
-    const li = grip.closest('li.task');
-    if (siblingsOf(li).length < 2) return;
-    e.preventDefault();
-    closeMenu(false);
-    try { grip.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
-    drag = { li: li, list: li.parentElement.dataset.list, startY: e.clientY, startTop: li.offsetTop, moved: false };
+    if (e.button > 0 || ui.editing || drag) return;
+    const li = e.target.closest('ul.tasks > li.task');
+    if (!li) return;
+    const onGrip = !!e.target.closest('[data-grip]');
+    // Mouse users can also drag by the row itself; touch uses the handle so scrolling still works.
+    const onRow = e.pointerType === 'mouse' && e.target.closest('.task-row') &&
+      !e.target.closest('.status-btn, .chev, a, input, textarea, select');
+    if (!onGrip && !onRow) return;
+    if (onGrip) e.preventDefault();
+    const rect = li.querySelector('.task-row').getBoundingClientRect();
+    drag = {
+      li: li, ul: li.parentElement, list: li.parentElement.dataset.list, pointerId: e.pointerId,
+      startX: e.clientX, startY: e.clientY, offsetY: e.clientY - rect.top, left: rect.left, width: rect.width,
+      moved: false, ghost: null, tempHead: null, origin: { next: li.nextSibling }
+    };
   });
+
+  function beginDrag() {
+    const d = drag;
+    d.moved = true;
+    closeMenu(false);
+    if (window.DatePicker) DatePicker.close(false);
+    const row = d.li.querySelector('.task-row');
+    const ghost = row.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.style.width = d.width + 'px';
+    ghost.style.left = d.left + 'px';
+    document.body.appendChild(ghost);
+    d.ghost = ghost;
+    d.li.classList.add('drop-slot');
+    document.body.classList.add('is-dragging');
+    // Offer a "Due later" drop area even when that section is empty.
+    if (!laterHeadIn(d.ul)) {
+      const tmp = document.createElement('li');
+      tmp.className = 'section-head later-head is-temp';
+      tmp.dataset.section = 'later';
+      tmp.innerHTML = '<span>Due later</span><span class="sec-hint">Drop here to move it later</span>';
+      const rows = taskRows(d.ul);
+      const lastRow = rows[rows.length - 1];
+      d.ul.insertBefore(tmp, lastRow ? lastRow.nextSibling : null);
+      d.tempHead = tmp;
+    }
+    if (window.getSelection) window.getSelection().removeAllRanges();
+  }
 
   document.addEventListener('pointermove', function (e) {
-    if (!drag) return;
-    const dy = e.clientY - drag.startY;
+    if (!drag || e.pointerId !== drag.pointerId) return;
     if (!drag.moved) {
-      if (Math.abs(dy) < 4) return;
-      drag.moved = true;
-      drag.li.classList.add('dragging');
-      document.body.classList.add('is-dragging');
+      if (Math.abs(e.clientY - drag.startY) < 5 && Math.abs(e.clientX - drag.startX) < 5) return;
+      beginDrag();
     }
-    const li = drag.li;
-    const top = drag.startTop + dy;
-    const sibs = siblingsOf(li);
-    const i = sibs.indexOf(li);
-    const prev = sibs[i - 1], next = sibs[i + 1];
-    if (prev && top < prev.offsetTop + prev.offsetHeight / 2) {
-      const r = prev.getBoundingClientRect().top;
-      li.parentElement.insertBefore(li, prev);
-      slide(prev, r);
-    } else if (next && top + li.offsetHeight > next.offsetTop + next.offsetHeight / 2) {
-      const r = next.getBoundingClientRect().top;
-      li.parentElement.insertBefore(next, li);
-      slide(next, r);
+    e.preventDefault();
+    const d = drag;
+    d.ghost.style.top = (e.clientY - d.offsetY) + 'px';
+    const rows = slotRows(d.ul).filter(function (r) { return r !== d.li; });
+    let before = null;
+    for (let i = 0; i < rows.length; i++) {
+      const b = rows[i].getBoundingClientRect();
+      if (e.clientY < b.top + b.height / 2) { before = rows[i]; break; }
     }
-    li.style.transform = 'translateY(' + (top - li.offsetTop) + 'px)';
+    if (before) {
+      if (d.li.nextElementSibling !== before) d.ul.insertBefore(d.li, before);
+    } else {
+      const last = rows[rows.length - 1];
+      if (last && last.nextElementSibling !== d.li) d.ul.insertBefore(d.li, last.nextSibling);
+    }
+    keepDoneOrder(d.li);
+    markTarget(d.ul, d.li);
     if (e.clientY < 48) window.scrollBy(0, -12);
     else if (e.clientY > window.innerHeight - 48) window.scrollBy(0, 12);
-  });
+  }, { passive: false });
 
-  function endDrag() {
-    if (!drag) return;
+  function endDrag(e, cancelled) {
+    if (!drag || (e && e.pointerId !== drag.pointerId)) return;
     const d = drag;
     drag = null;
-    document.body.classList.remove('is-dragging');
     if (!d.moved) return;
-    d.li.classList.remove('dragging');
-    d.li.style.transform = '';
-    saveOrderFromDOM(d.list);
-    renderTasks(d.list);
+    suppressClick = true;
+    setTimeout(function () { suppressClick = false; }, 0);
+    document.body.classList.remove('is-dragging');
+    if (d.ghost) d.ghost.remove();
+    d.li.classList.remove('drop-slot');
+    const head = laterHeadIn(d.ul);
+    if (head) head.classList.remove('drop-target');
+    if (cancelled) {
+      d.ul.insertBefore(d.li, d.origin.next);
+      if (d.tempHead) d.tempHead.remove();
+      return;
+    }
+    commitMove(d.li, d.list);
     focusLater('[data-list="' + d.list + '"] li[data-id="' + d.li.dataset.id + '"] [data-grip]');
   }
-  document.addEventListener('pointerup', endDrag);
-  document.addEventListener('pointercancel', endDrag);
+  document.addEventListener('pointerup', function (e) { endDrag(e, false); });
+  document.addEventListener('pointercancel', function (e) { endDrag(e, true); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && drag && drag.moved) { e.preventDefault(); e.stopPropagation(); endDrag(null, true); }
+  }, true);
 
+  // Arrow keys on the handle move the item one place, across sections too.
   document.addEventListener('keydown', function (e) {
     const grip = e.target.closest && e.target.closest('[data-grip]');
-    if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || drag) return;
     e.preventDefault();
     const li = grip.closest('li.task');
-    const sibs = siblingsOf(li);
-    const i = sibs.indexOf(li);
+    const ul = li.parentElement;
+    const list = ul.dataset.list;
+    let tmp = null;
+    if (!laterHeadIn(ul) && e.key === 'ArrowDown') {
+      tmp = document.createElement('li');
+      tmp.className = 'section-head later-head is-temp';
+      tmp.dataset.section = 'later';
+      const rowsNow = taskRows(ul);
+      ul.insertBefore(tmp, rowsNow[rowsNow.length - 1].nextSibling);
+    }
+    const rows = slotRows(ul);
+    const i = rows.indexOf(li);
     const j = e.key === 'ArrowUp' ? i - 1 : i + 1;
-    if (j < 0 || j >= sibs.length) return;
-    if (j < i) li.parentElement.insertBefore(li, sibs[j]);
-    else li.parentElement.insertBefore(sibs[j], li);
-    const list = li.parentElement.dataset.list;
-    saveOrderFromDOM(list);
-    renderTasks(list);
+    const beforeSec = sectionOfRow(li);
+    const beforeNext = li.nextSibling;
+    if (j >= 0 && j < rows.length) {
+      if (j < i) ul.insertBefore(li, rows[j]);
+      else ul.insertBefore(li, rows[j].nextSibling);
+      keepDoneOrder(li);
+    }
+    if (li.nextSibling === beforeNext && sectionOfRow(li) === beforeSec) {
+      if (tmp) tmp.remove();
+      announce(e.key === 'ArrowUp' ? 'Already at the top.' : 'Already at the bottom.');
+      return;
+    }
+    commitMove(li, list);
     focusLater('[data-list="' + list + '"] li[data-id="' + li.dataset.id + '"] [data-grip]');
   });
+
+  // "Move to This week / Due later" in the expanded details.
+  function moveToSection(list, id, to) {
+    const it = find(list, id);
+    if (!it) return;
+    if (to === naturalPlacement(list, it)) delete it.pin;
+    else it.pin = { section: to, on: cur(list, it).due };
+    if (hasCustomOrder(list)) state.order[list] = state.order[list].filter(function (x) { return x !== id; });
+    if (to === 'later') ui.later[list] = true;
+    save();
+    renderTasks(list, true);
+    renderHeader();
+    toast('Moved to ' + SECTION_NAME[to] + '.');
+    announce('Moved to ' + SECTION_NAME[to] + '.');
+    focusLater('[data-list="' + list + '"] li[data-id="' + id + '"] .task-main');
+  }
 
   /* ---------- Status menu ---------- */
 
@@ -1248,11 +1398,13 @@
         break;
       case 'auto-sort':
         if (state.order) delete state.order[el.dataset.list];
+        state[el.dataset.list].forEach(function (it) { delete it.pin; });
         save();
         renderTasks(el.dataset.list, true);
         toast('Sorted by due date.');
         focusLater('[data-action="add-task"][data-list="' + el.dataset.list + '"]');
         break;
+      case 'move-section': moveToSection(el.dataset.list, el.dataset.id, el.dataset.to); break;
       case 'toggle-later':
         ui.later[el.dataset.list] = !ui.later[el.dataset.list];
         renderTasks(el.dataset.list);

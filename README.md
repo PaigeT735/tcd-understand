@@ -23,8 +23,11 @@ Then visit http://localhost:8000
   Math and Statistics items follow the problem-set week instead: released Wednesday, due Tuesday, reset every Tuesday.
 - Other repeats (daily, every 2 weeks, monthly, yearly, custom) repeat from the item's own date.
 - Weekly Reading and Weekly HW sort automatically: earliest due first; on the same day, In progress before Not started; completed items at the bottom.
-  Drag an item by its handle (or focus the handle and use the arrow keys) to arrange a list yourself. That order is saved; new items slot in by due date,
-  and completed items still drop to the bottom. "Sort by due date" in the list's footer switches back to automatic order.
+  Each list has two sections, This week and Due later. Drag an item by its handle (or, with a mouse, by its text) to reorder it or move it
+  between sections; the highlighted slot shows where it will land. Keyboard: focus the handle and use the arrow keys. Each item's details
+  also have a "Move to This week / Due later" button. Your order and section choices are saved; a repeating item returns to its usual
+  section when its next cycle starts. New items slot in by due date, and completed items stay at the bottom of their section.
+  "Sort by due date" in the list's footer switches back to automatic order and sections.
 - Nothing is copied when a week rolls over. Each status is saved against the due date it was set for, so a new cycle simply starts as "Not started".
   Completed one-off items drop off the dashboard the week after they were due but stay on the calendar.
 - To preview a different day, add `?today=YYYY-MM-DD` to the URL (e.g. `?today=2026-09-23`). Viewing a date doesn't change saved data.

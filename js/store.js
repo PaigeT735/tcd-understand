@@ -94,6 +94,7 @@
         it.repeat = cleanRepeat(it.repeat);
         it.dueOffset = Number.isFinite(it.dueOffset) ? it.dueOffset : 6;
         it.startOffset = Number.isFinite(it.startOffset) ? it.startOffset : null;
+        if (!(it.pin && (it.pin.section === 'now' || it.pin.section === 'later') && D.isValid(it.pin.on))) delete it.pin;
         if (R.isAcademic(it)) {
           const day = R.CYCLES[it.kind].startDay;
           const base = D.isValid(it.anchor) ? it.anchor : D.mondayOf(D.today());
