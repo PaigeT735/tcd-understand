@@ -334,6 +334,7 @@
         '</button>' +
         dueCell(it, c, status) +
         '<button type="button" class="chev" data-action="toggle" aria-expanded="' + open + '" aria-label="' + (open ? 'Hide' : 'Show') + ' details for ' + esc(headOf(it) + (subOf(it) ? ', ' + subOf(it) : '')) + '">' + CHEV + '</button>' +
+        '<button type="button" class="row-del" data-action="delete-item" data-store="' + list + '" data-id="' + it.id + '" aria-label="Delete ' + esc(label) + '" title="Delete">×</button>' +
       '</div>' +
       '<div class="reveal"><div class="reveal-inner">' + body + '</div></div>' +
     '</li>';
@@ -552,7 +553,7 @@
     const onGrip = !!e.target.closest('[data-grip]');
     // Mouse users can also drag by the row itself; touch uses the handle so scrolling still works.
     const onRow = e.pointerType === 'mouse' && e.target.closest('.task-row') &&
-      !e.target.closest('.status-btn, .chev, a, input, textarea, select');
+      !e.target.closest('.status-btn, .chev, .row-del, a, input, textarea, select');
     if (!onGrip && !onRow) return;
     if (onGrip) e.preventDefault();
     const rect = li.querySelector('.task-row').getBoundingClientRect();

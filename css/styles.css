@@ -171,7 +171,7 @@ button.link.danger:hover { color: var(--todo); }
 /* ---------- Task rows ---------- */
 .cols, .task-row {
   display: grid;
-  grid-template-columns: 18px 36px minmax(0, 1fr) 76px 30px;
+  grid-template-columns: 18px 36px minmax(0, 1fr) 76px 30px 26px;
   align-items: center;
 }
 .cols {
@@ -179,6 +179,7 @@ button.link.danger:hover { color: var(--todo); }
   font-size: 11.5px; color: var(--faint); font-weight: 500;
 }
 .cols span:first-child { grid-column: 1 / span 2; padding-left: 4px; }
+.cols span:last-child { grid-column: 5 / span 2; }
 .c-due { text-align: right; padding-right: 4px; }
 
 .tasks > li { border-bottom: 1px solid var(--line-soft); }
@@ -245,6 +246,13 @@ button.link.danger:hover { color: var(--todo); }
   color: var(--muted); display: grid; place-items: center; padding: 0;
 }
 .chev:hover { background: var(--line-soft); color: var(--ink); }
+.row-del {
+  width: 26px; height: 26px; border: 0; background: none; border-radius: 6px; padding: 0;
+  color: var(--faint); font-size: 16px; line-height: 1;
+  opacity: 0;
+}
+.task-row:hover .row-del, .task-row:focus-within .row-del, .row-del:focus { opacity: 1; }
+.row-del:hover { background: var(--line-soft); color: var(--todo); }
 .chev svg { transition: transform .18s ease; }
 .open > .task-row .chev svg,
 .open > .class-row .chev svg { transform: rotate(90deg); }
@@ -682,6 +690,7 @@ button.link.danger:hover { color: var(--todo); }
   .comp-edit-row, .comp-edit-head { grid-template-columns: minmax(0, 1fr) 64px minmax(0, .8fr) 28px; }
 }
 @media (hover: none) {
+  .row-del { opacity: 1; }
   .date-side { display: flex; gap: 12px; }
   .date-actions { opacity: 1; pointer-events: auto; }
   .date-row .rel { opacity: 1 !important; }
